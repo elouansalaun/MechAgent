@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+build/
+dist/
+.DS_Store
+
+# Solver and mesher outputs are regenerated, we never commit them
+runs/
+logs/
+*.frd
+*.dat
+*.sta
+*.cvg
+*.msh
+*.12d

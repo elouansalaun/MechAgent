@@ -1,0 +1,18 @@
+# Conda environment for MechAgent.
+# CalculiX and the OpenCascade stack behind CadQuery are easiest to get from conda-forge,
+# the pure Python dependencies are then installed from pyproject.toml with pip.
+name: mechagent
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - calculix
+  - gmsh
+  - python-gmsh
+  - cadquery
+  - numpy
+  - scipy
+  - pyvista
+  - pip:
+      - -e ".[dev]"
