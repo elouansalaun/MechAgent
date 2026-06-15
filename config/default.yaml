@@ -1,0 +1,31 @@
+# MechAgent default configuration.
+# Copy this file and point MECHAGENT_CONFIG to it to override values.
+
+project:
+  name: MechAgent
+  work_dir: runs          # every analysis run writes its files in a sub folder here
+  data_dir: data
+
+# We work in a consistent unit system so that CalculiX never sees mixed units.
+# mm - N - MPa - tonne - s  (density in tonne/mm^3, e.g. steel = 7.85e-9)
+units:
+  length: mm
+  force: N
+  stress: MPa
+  mass: tonne
+  time: s
+
+solvers:
+  calculix_executable: ccx
+  gmsh_executable: gmsh
+  timeout_s: 600
+
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: qwen2.5:7b
+  temperature: 0.0
+
+logging:
+  level: INFO
+  file: logs/mechagent.log
