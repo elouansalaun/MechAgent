@@ -18,15 +18,15 @@ def test_default_config_file_is_valid():
     assert settings.units.length == "mm"
     assert settings.units.stress == "MPa"
     assert settings.solvers.calculix_executable == "ccx"
-    assert settings.llm.provider == "ollama"
+    assert settings.llm.provider == "lmstudio"
 
 
 def test_partial_config_falls_back_on_defaults(write_config):
-    path = write_config({"llm": {"model": "llama3.1:8b"}})
+    path = write_config({"llm": {"model": "google/gemma-4-e4b"}})
 
     settings = load_settings(path)
 
-    assert settings.llm.model == "llama3.1:8b"
+    assert settings.llm.model == "google/gemma-4-e4b"
     assert settings.solvers.timeout_s == 600
 
 

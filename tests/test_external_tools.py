@@ -110,3 +110,27 @@ def test_cadquery_builds_a_box():
     box = cq.Workplane("XY").box(10, 20, 5)
 
     assert box.val().Volume() == pytest.approx(1000.0)
+
+
+def test_lmstudio_model_answers():
+    from mechagent.core.config import load_settings
+    from mechagent.core.environment import check_llm_server
+
+    llm_settings = load_settings().llm
+    status = check_llm_server(llm_settings.base_url, llm_settings.model)
+    if not status.available:
+        pytest.skip(f"LM Studio is not ready: {status.detail}")
+
+    from langchain_openai import ChatOpenAI
+
+    # LM Studio ignores the API key, but the OpenAI client requires one.
+    llm = ChatOpenAI(
+        base_url=llm_settings.base_url,
+        model=llm_settings.model,
+        temperature=llm_settings.temperature,
+        api_key="lm-studio",
+        timeout=120,
+    )
+    answer = llm.invoke("Reply with the single word: ready")
+
+    assert "ready" in answer.content.lower()

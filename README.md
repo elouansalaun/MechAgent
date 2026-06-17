@@ -6,7 +6,7 @@ design targets. From those it generates a parametric part, simulates it, optimiz
 writes an engineering report.
 
 The idea behind the project: **the LLM orchestrates, deterministic tools compute.**
-The language model (local, through Ollama) interprets requirements, chooses which analyses
+The language model (local, served by LM Studio) interprets requirements, chooses which analyses
 to run and decides whether to iterate. Every stress, displacement, mass or fatigue life is
 computed by CadQuery, Gmsh, CalculiX, NumPy/SciPy or Optuna, never by the LLM. A design is
 only declared valid once every required verification has run and passed.
@@ -18,7 +18,7 @@ The first supported component is a mechanical mounting bracket, optimized with p
 
 ```
                  ┌──────────────────────────────────────────┐
-  requirements → │  agent/  LangGraph workflow (Ollama LLM) │ → report
+  requirements → │ agent/ LangGraph workflow (LM Studio LLM)│ → report
                  └──────┬──────────┬──────────┬─────────────┘
                         │ calls deterministic tools
         ┌───────────────┼──────────┼──────────┼──────────────────┐
@@ -78,19 +78,17 @@ conda env create -f environment.yml
 conda activate mechagent
 ```
 
-The agent also needs a local [Ollama](https://ollama.com) server with the model set in
-`config/default.yaml` (by default `qwen2.5:7b`):
+The agent also needs a local LLM. We use [LM Studio](https://lmstudio.ai) and its
+OpenAI compatible server, which LangChain talks to through `langchain-openai`. Load the
+model set in `config/default.yaml` (by default `qwen/qwen3.5-9b`) and start the server on
+port 1234, either from the LM Studio Developer tab or from its CLI:
 
 ```bash
-brew install ollama
+lms load qwen/qwen3.5-9b
 ```
 
 ```bash
-ollama serve
-```
-
-```bash
-ollama pull qwen2.5:7b
+lms server start
 ```
 
 ## Checking the environment
@@ -120,9 +118,10 @@ pytest
 ```
 
 Tests marked `external` run the real tools. CalculiX solves a single-element tension
-problem, which is checked against the analytical result u = FL/EA. Gmsh meshes a box, and
-CadQuery builds one. When a tool is missing these tests are skipped with a visible reason
-rather than passing. To run only the fast unit tests:
+problem, which is checked against the analytical result u = FL/EA. Gmsh meshes a box,
+CadQuery builds one, and the LM Studio model answers a short prompt. When a tool is missing
+these tests are skipped with a visible reason rather than passing. To run only the fast unit
+tests:
 
 ```bash
 pytest -m "not external"

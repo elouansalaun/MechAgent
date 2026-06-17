@@ -31,7 +31,7 @@ PYTHON_PACKAGES = {
     "optuna": "optuna",
     "pyvista": "pyvista",
     "langgraph": "langgraph",
-    "langchain_ollama": "langchain-ollama",
+    "langchain_openai": "langchain-openai",
     "streamlit": "streamlit",
     "pytest": "pytest",
 }
@@ -104,23 +104,24 @@ def check_executable(name: str, executable: str, version_args: list[str]) -> Too
     return ToolStatus(name=name, available=True, version=version, location=path)
 
 
-def check_ollama_server(base_url: str, model: str, timeout: float = 3.0) -> ToolStatus:
-    url = base_url.rstrip("/") + "/api/tags"
+def check_llm_server(base_url: str, model: str, timeout: float = 3.0) -> ToolStatus:
+    """Check that the OpenAI compatible server (LM Studio) answers and serves `model`."""
+    url = base_url.rstrip("/") + "/models"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             payload = json.loads(response.read().decode())
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        return ToolStatus(name="ollama-server", available=False, location=base_url, detail=str(exc))
+        return ToolStatus(name="llm-server", available=False, location=base_url, detail=str(exc))
 
-    models = [m.get("name", "") for m in payload.get("models", [])]
+    models = [m.get("id", "") for m in payload.get("data", [])]
     if model not in models:
         return ToolStatus(
-            name="ollama-server",
+            name="llm-server",
             available=False,
             location=base_url,
-            detail=f"server is running but model '{model}' is not pulled (found: {models})",
+            detail=f"server is running but model '{model}' is not available (found: {models})",
         )
-    return ToolStatus(name="ollama-server", available=True, location=base_url, detail=model)
+    return ToolStatus(name="llm-server", available=True, location=base_url, detail=model)
 
 
 def inspect_environment(settings: Settings | None = None) -> EnvironmentReport:
@@ -130,9 +131,8 @@ def inspect_environment(settings: Settings | None = None) -> EnvironmentReport:
     executables = [
         check_executable("calculix", settings.solvers.calculix_executable, ["-v"]),
         check_executable("gmsh", settings.solvers.gmsh_executable, ["--version"]),
-        check_executable("ollama", "ollama", ["--version"]),
     ]
-    services = [check_ollama_server(settings.llm.base_url, settings.llm.model)]
+    services = [check_llm_server(settings.llm.base_url, settings.llm.model)]
 
     return EnvironmentReport(
         python_version=sys.version.split()[0],
@@ -153,7 +153,7 @@ def format_report(report: EnvironmentReport) -> str:
         lines.append(title)
         for tool in tools:
             mark = "OK " if tool.available else "MISSING"
-            info = tool.version or ""
+            info = tool.version or tool.detail or ""
             if not tool.available and tool.detail:
                 info = tool.detail
             lines.append(f"  [{mark:7}] {tool.name:18} {info}")

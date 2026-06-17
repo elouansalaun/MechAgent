@@ -20,10 +20,11 @@ solvers:
   gmsh_executable: gmsh
   timeout_s: 600
 
+# Local LLM served by LM Studio through its OpenAI compatible API.
 llm:
-  provider: ollama
-  base_url: http://localhost:11434
-  model: qwen2.5:7b
+  provider: lmstudio
+  base_url: http://localhost:1234/v1
+  model: qwen/qwen3.5-9b
   temperature: 0.0
 
 logging:

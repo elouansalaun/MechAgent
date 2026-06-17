@@ -40,9 +40,9 @@ class SolversConfig(_Section):
 
 
 class LLMConfig(_Section):
-    provider: Literal["ollama"] = "ollama"
-    base_url: str = "http://localhost:11434"
-    model: str = "qwen2.5:7b"
+    provider: Literal["lmstudio"] = "lmstudio"
+    base_url: str = "http://localhost:1234/v1"
+    model: str = "qwen/qwen3.5-9b"
     temperature: float = Field(0.0, ge=0.0, le=2.0)
 
 

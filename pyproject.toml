@@ -18,7 +18,7 @@ dependencies = [
     "optuna>=3.6",
     "pyvista>=0.43",
     "langgraph>=0.2",
-    "langchain-ollama>=0.2",
+    "langchain-openai>=0.2",
     "streamlit>=1.35",
 ]
 
@@ -39,7 +39,7 @@ where = ["src"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
-    "external: needs an external tool (CalculiX, Gmsh, Ollama) installed on the machine",
+    "external: needs an external tool (CalculiX, Gmsh, LM Studio) installed on the machine",
 ]
 log_level = "INFO"
 
