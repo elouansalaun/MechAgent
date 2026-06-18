@@ -42,6 +42,10 @@ markers = [
     "external: needs an external tool (CalculiX, Gmsh, LM Studio) installed on the machine",
 ]
 log_level = "INFO"
+filterwarnings = [
+    # ezdxf, pulled in by CadQuery, still uses the old pyparsing names
+    "ignore::DeprecationWarning:ezdxf.*",
+]
 
 [tool.ruff]
 line-length = 100
