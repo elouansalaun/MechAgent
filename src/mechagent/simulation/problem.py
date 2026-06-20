@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mechagent.core.geometry import GeometryModel, Vec3
@@ -10,12 +12,17 @@ from mechagent.simulation.mesh import MeshSettings
 
 
 class Constraint(BaseModel):
-    """Zero displacement on the given degrees of freedom (1=x, 2=y, 3=z) of a face group."""
+    """Zero displacement on the given degrees of freedom (1=x, 2=y, 3=z) of a face group.
+
+    A "support" stands for the real surroundings of the part and creates artificial stress
+    peaks. A "symmetry" plane is exact, stresses on it are kept as design values.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     surface: str
     dofs: tuple[int, ...] = (1, 2, 3)
+    kind: Literal["support", "symmetry"] = "support"
     description: str = ""
 
     @field_validator("dofs")
@@ -51,4 +58,7 @@ class StaticProblem(BaseModel):
     constraints: list[Constraint] = Field(min_length=1)
     loads: list[SurfaceForce] = Field(min_length=1)
     mesh: MeshSettings = MeshSettings()
+    # Stresses on and closer than this to support nodes are not used as design values: rigid
+    # supports create stress singularities that grow without bound as the mesh is refined.
+    stress_exclusion_distance: float = Field(0.0, ge=0, description="mm")
     assumptions: list[str] = []

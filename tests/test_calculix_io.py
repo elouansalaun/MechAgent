@@ -7,7 +7,7 @@ from mechagent.cad.reference import box
 from mechagent.materials.material import Material
 from mechagent.simulation.calculix import (
     SolverError,
-    read_reaction_totals,
+    read_node_forces,
     run_calculix,
     write_input,
 )
@@ -52,9 +52,14 @@ FRD_SAMPLE = """\
 DAT_SAMPLE = """
                         S T E P       1
 
- total force (fx,fy,fz) for set CONSTRAINED and time  0.1000000E+01
 
-       -1.000000E+02  4.336809E-16  2.000000E+03
+                                INCREMENT     1
+
+
+ forces (fx,fy,fz) for set CONSTRAINED and time  0.1000000E+01
+
+         1 -5.000000E+01  4.336809E-16  1.000000E+03
+         4 -5.000000E+01 -2.000000E-16  1.000000E+03
 """
 
 
@@ -95,11 +100,14 @@ def test_von_mises_reference_states():
     assert von_mises(hydrostatic) == pytest.approx([0.0])
 
 
-def test_reaction_totals_are_read(tmp_path):
+def test_node_forces_are_read(tmp_path):
     path = tmp_path / "job.dat"
     path.write_text(DAT_SAMPLE)
 
-    assert read_reaction_totals(path) == pytest.approx([-100.0, 0.0, 2000.0])
+    forces = read_node_forces(path)
+
+    assert sorted(forces) == [1, 4]
+    assert forces[4] == pytest.approx([-50.0, -2e-16, 1000.0])
 
 
 def test_written_deck_contains_sets_constraints_and_loads(tmp_path):

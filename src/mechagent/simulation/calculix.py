@@ -93,7 +93,7 @@ def write_input(
                 lines.append(f"{node}, {dof}, {value:.12g}")
 
     lines += [
-        f"*NODE PRINT, NSET={CONSTRAINED_SET}, TOTALS=ONLY",
+        f"*NODE PRINT, NSET={CONSTRAINED_SET}",
         "RF",
         "*NODE FILE",
         "U",
@@ -157,13 +157,27 @@ def run_calculix(
     return run
 
 
-def read_reaction_totals(dat_file: Path, set_name: str = CONSTRAINED_SET) -> np.ndarray:
-    """Total reaction force (N) printed by *NODE PRINT, TOTALS=ONLY."""
+def read_node_forces(dat_file: Path, set_name: str = CONSTRAINED_SET) -> dict[int, np.ndarray]:
+    """Nodal forces (N) printed by *NODE PRINT with RF.
+
+    CalculiX prints the three components of every node in the set, also on the directions
+    that are not constrained. The caller keeps only the constrained ones.
+    """
     lines = dat_file.read_text().splitlines()
-    header = f"total force (fx,fy,fz) for set {set_name.upper()}"
+    header = f"forces (fx,fy,fz) for set {set_name.upper()}"
+    forces: dict[int, np.ndarray] = {}
     for i, line in enumerate(lines):
-        if header in line:
-            for following in lines[i + 1 :]:
-                if following.strip():
-                    return np.array([float(v) for v in following.split()[:3]])
-    raise SolverError(f"no reaction totals for set {set_name} in {dat_file}")
+        if header not in line:
+            continue
+        for following in lines[i + 1 :]:
+            parts = following.split()
+            if not parts:
+                if forces:
+                    break
+                continue
+            if len(parts) != 4:
+                break
+            forces[int(parts[0])] = np.array([float(v) for v in parts[1:]])
+    if not forces:
+        raise SolverError(f"no nodal forces for set {set_name} in {dat_file}")
+    return forces

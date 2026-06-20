@@ -14,3 +14,11 @@ def write_config(tmp_path: Path):
         return path
 
     return _write
+
+
+@pytest.fixture
+def require_ccx():
+    import shutil
+
+    if shutil.which("ccx") is None:
+        pytest.skip("CalculiX (ccx) is not on PATH")
