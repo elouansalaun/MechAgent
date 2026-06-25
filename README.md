@@ -34,10 +34,10 @@ The first supported component is a mechanical mounting bracket, optimized with p
 
 | Package                    | Role                                                         | Status   |
 | -------------------------- | ------------------------------------------------------------ | -------- |
-| `mechagent.core`           | Configuration, logging, unit system, environment checks      | Phase 0  |
-| `mechagent.cad`            | Parametric bracket geometry with CadQuery                    | Phase 1  |
-| `mechagent.simulation`     | Gmsh meshing, CalculiX static FEM, S-N fatigue, Miner damage | Phase 1-2|
-| `mechagent.materials`      | Material database and candidate selection                    | Phase 2  |
+| `mechagent.core`           | Configuration, logging, units, geometry interface, checks    | Done     |
+| `mechagent.cad`            | Parametric bracket and reference geometries with CadQuery    | Done     |
+| `mechagent.simulation`     | Gmsh meshing, CalculiX static FEM, convergence, validation   | Static done, fatigue in Phase 2 |
+| `mechagent.materials`      | Material model (done), database and selection (Phase 2)      | Partial  |
 | `mechagent.optimization`   | Parametric optimization with Optuna                          | Phase 2  |
 | `mechagent.agent`          | LangGraph orchestration of the engineering workflow          | Phase 3  |
 | `mechagent.reporting`      | Engineering report and 3D visualizations                     | Phase 4  |
@@ -47,7 +47,8 @@ Other folders:
 
 - `config/` holds the YAML configuration (`default.yaml`).
 - `data/` holds input data such as material properties and S-N curves.
-- `examples/` holds example requirement files.
+- `docs/` holds the implementation notes, see [docs/simulation.md](docs/simulation.md).
+- `examples/` holds runnable examples.
 - `tests/` holds the pytest suite, including smoke tests on the real solvers.
 - `runs/` and `logs/` are created at runtime and ignored by git.
 
@@ -111,17 +112,48 @@ MECHAGENT_CONFIG=my_config.yaml mechagent-check-env
 
 The file is validated with Pydantic, so unknown keys (typos) and unsupported units are errors.
 
+## Static analysis of the bracket
+
+```bash
+python examples/bracket_static.py
+```
+
+The example validates the solver chain on the analytical reference cases, then runs a mesh
+convergence study on the default aluminium bracket under a 2000 N pin load and prints every
+result, check and assumption. Each run gets its own folder under `runs/` with the BREP,
+CalculiX deck and outputs, `problem.json`, `result.json` and the nodal fields (`fields.npz`).
+
+From Python:
+
+```python
+from pathlib import Path
+from mechagent.cad.bracket import BracketParameters, build_bracket
+from mechagent.materials.material import Material
+from mechagent.simulation.bracket import bracket_static_problem
+from mechagent.simulation.static import run_static_analysis
+
+material = Material(name="Al6061-T6", youngs_modulus=68900, poisson_ratio=0.33,
+                    density=2.70e-9, yield_strength=276, ultimate_strength=310)
+params = BracketParameters(base_thickness=10, rib_thickness=3)
+geometry = build_bracket(params, Path("runs/my_bracket"))
+problem = bracket_static_problem(geometry, params, material, force=(0, 0, -2000))
+result = run_static_analysis(problem, Path("runs/my_bracket/static"))
+print(result.design_von_mises, result.max_displacement, result.verified)
+```
+
+How the chain works, which checks it runs and what its limits are is described in
+[docs/simulation.md](docs/simulation.md).
+
 ## Tests
 
 ```bash
 pytest
 ```
 
-Tests marked `external` run the real tools. CalculiX solves a single-element tension
-problem, which is checked against the analytical result u = FL/EA. Gmsh meshes a box,
-CadQuery builds one, and the LM Studio model answers a short prompt. When a tool is missing
-these tests are skipped with a visible reason rather than passing. To run only the fast unit
-tests:
+Tests marked `external` run the real tools: CalculiX analyses of the bracket, the
+analytical validation cases, a convergence study and an LM Studio prompt. When a tool is
+missing these tests are skipped with a visible reason rather than passing. To run only the
+fast unit tests:
 
 ```bash
 pytest -m "not external"
@@ -131,7 +163,7 @@ pytest -m "not external"
 
 - **Phase 0**: environment, project structure, configuration, logging, tests (done).
 - **Phase 1**: parametric bracket CAD, Gmsh meshing, CalculiX static analysis, result
-  parsing, mesh convergence and analytical validation cases.
+  parsing, mesh convergence and analytical validation cases (done).
 - **Phase 2**: material database, S-N fatigue with mean stress correction and Miner damage,
   Optuna parametric optimization.
 - **Phase 3**: LangGraph agent: requirement interpretation, missing-data detection, analysis
