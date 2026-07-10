@@ -1,0 +1,112 @@
+# Candidate materials for MechAgent.
+#
+# These are TYPICAL handbook values (ASM, MatWeb style data sheets and Shigley's estimates),
+# not certified design allowables. Replace them with supplier or MMPDS data for real designs.
+#
+# Units: MPa, tonne/mm^3, EUR/kg, cm^3/min.
+# Fatigue data: smooth polished specimens, fully reversed loading (R = -1).
+# For steels without a measured curve we use Shigley's estimates:
+#   S at 1e3 cycles = f * Sut (f from Shigley fig. 6-18), endurance limit = 0.5 * Sut at 1e6.
+# Prices and removal rates are rough indications to compare materials, not quotes.
+
+Al6061-T6:
+  category: aluminium
+  youngs_modulus: 68900
+  poisson_ratio: 0.33
+  density: 2.70e-9
+  yield_strength: 276
+  ultimate_strength: 310
+  cost_per_kg: 4.0
+  removal_rate: 40
+  fatigue:
+    strength_at_1e3: 279       # 0.9 * Sut
+    knee_strength: 96.5        # fatigue strength at 5e8 cycles, R.R. Moore test
+    knee_cycles: 5.0e8
+    endurance_limit: false
+    source: typical data sheet value at 5e8 cycles, 0.9 Sut at 1e3
+  source: typical handbook values
+
+Al7075-T6:
+  category: aluminium
+  youngs_modulus: 71700
+  poisson_ratio: 0.33
+  density: 2.81e-9
+  yield_strength: 503
+  ultimate_strength: 572
+  cost_per_kg: 8.0
+  removal_rate: 35
+  fatigue:
+    strength_at_1e3: 515       # 0.9 * Sut
+    knee_strength: 159         # fatigue strength at 5e8 cycles, R.R. Moore test
+    knee_cycles: 5.0e8
+    endurance_limit: false
+    source: typical data sheet value at 5e8 cycles, 0.9 Sut at 1e3
+  source: typical handbook values
+
+S355J2:
+  category: steel
+  youngs_modulus: 210000
+  poisson_ratio: 0.30
+  density: 7.85e-9
+  yield_strength: 355
+  ultimate_strength: 510
+  cost_per_kg: 1.5
+  removal_rate: 12
+  fatigue:
+    strength_at_1e3: 459       # 0.9 * Sut
+    knee_strength: 255         # 0.5 * Sut
+    knee_cycles: 1.0e6
+    endurance_limit: true
+    source: Shigley estimates from Sut
+  source: EN 10025-2 minimum strengths (thickness up to 16 mm), typical elastic values
+
+42CrMo4-QT:
+  category: steel
+  youngs_modulus: 210000
+  poisson_ratio: 0.29
+  density: 7.85e-9
+  yield_strength: 650
+  ultimate_strength: 900
+  cost_per_kg: 3.0
+  removal_rate: 8
+  fatigue:
+    strength_at_1e3: 756       # 0.84 * Sut
+    knee_strength: 450         # 0.5 * Sut
+    knee_cycles: 1.0e6
+    endurance_limit: true
+    source: Shigley estimates from Sut
+  source: typical quenched and tempered values (EN 10083-3, 40 to 100 mm)
+
+X5CrNi18-10:
+  category: stainless_steel
+  youngs_modulus: 193000
+  poisson_ratio: 0.29
+  density: 8.00e-9
+  yield_strength: 215
+  ultimate_strength: 505
+  cost_per_kg: 4.5
+  removal_rate: 6
+  fatigue:
+    strength_at_1e3: 455       # 0.9 * Sut
+    knee_strength: 240         # typical data sheet fatigue strength
+    knee_cycles: 1.0e7
+    endurance_limit: true
+    source: typical data sheet value for annealed 304, 0.9 Sut at 1e3
+  source: typical annealed AISI 304 values
+
+Ti-6Al-4V:
+  category: titanium
+  youngs_modulus: 113800
+  poisson_ratio: 0.342
+  density: 4.43e-9
+  yield_strength: 880
+  ultimate_strength: 950
+  cost_per_kg: 30.0
+  removal_rate: 3
+  fatigue:
+    strength_at_1e3: 855       # 0.9 * Sut, estimate
+    knee_strength: 510         # unnotched fatigue strength at 1e7 cycles
+    knee_cycles: 1.0e7
+    endurance_limit: false
+    source: typical data sheet value at 1e7 cycles for annealed grade 5, 0.9 Sut at 1e3
+  source: typical annealed grade 5 values

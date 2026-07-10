@@ -1,12 +1,13 @@
 """Material model used by the simulations.
 
 Units follow the project system: MPa for moduli and strengths, tonne/mm^3 for density.
-The material database and selection logic come in Phase 2.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from mechagent.materials.fatigue import SNData
 
 
 class Material(BaseModel):
@@ -18,6 +19,12 @@ class Material(BaseModel):
     density: float = Field(gt=0, description="tonne/mm^3, e.g. 7.85e-9 for steel")
     yield_strength: float = Field(gt=0, description="MPa")
     ultimate_strength: float = Field(gt=0, description="MPa")
+    category: str = ""
+    cost_per_kg: float | None = Field(None, gt=0, description="raw stock price, EUR/kg")
+    removal_rate: float | None = Field(
+        None, gt=0, description="typical CNC material removal rate, cm^3/min"
+    )
+    fatigue: SNData | None = None
     source: str = ""
 
     @model_validator(mode="after")
