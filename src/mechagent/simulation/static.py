@@ -78,6 +78,7 @@ class FieldResults:
     displacement: np.ndarray  # (N, 3) mm
     stress: np.ndarray  # (N, 6) MPa, SXX SYY SZZ SXY SYZ SZX
     von_mises: np.ndarray  # (N,) MPa
+    evaluated: np.ndarray  # (N,) bool, nodes outside the stress exclusion zone
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -131,7 +132,7 @@ def split_forces(
     return free, constrained
 
 
-def _read_fields(mesh: Mesh, frd_file: Path) -> FieldResults:
+def _read_fields(mesh: Mesh, frd_file: Path, evaluated: np.ndarray) -> FieldResults:
     blocks = read_frd(frd_file)
     for name in ("DISP", "STRESS"):
         if name not in blocks:
@@ -146,6 +147,7 @@ def _read_fields(mesh: Mesh, frd_file: Path) -> FieldResults:
         displacement=blocks["DISP"].values[:, :3],
         stress=stress,
         von_mises=von_mises(stress),
+        evaluated=evaluated,
     )
 
 
@@ -180,7 +182,7 @@ def run_static_analysis(
             f"(see {solver.log_file})"
         )
 
-    fields = _read_fields(mesh, run_dir / f"{JOB_NAME}.frd")
+    fields = _read_fields(mesh, run_dir / f"{JOB_NAME}.frd", evaluated_nodes(mesh, problem))
     np.savez_compressed(run_dir / "fields.npz", **vars(fields))
     # Loads on a constrained dof go straight into the support, the structure never sees them.
     dofs = constrained_dofs(mesh, problem)
@@ -190,7 +192,7 @@ def run_static_analysis(
     magnitude = np.linalg.norm(fields.displacement, axis=1)
     i_disp = int(np.argmax(magnitude))
     i_stress = int(np.argmax(fields.von_mises))
-    evaluated = np.flatnonzero(evaluated_nodes(mesh, problem))
+    evaluated = np.flatnonzero(fields.evaluated)
     i_design = evaluated[np.argmax(fields.von_mises[evaluated])]
     design_vm = float(fields.von_mises[i_design])
 

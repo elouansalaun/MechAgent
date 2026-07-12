@@ -19,10 +19,10 @@ def cases(tmp_path_factory):
 def test_every_reference_case_runs(cases):
     names = {(c.name, c.quantity) for c in cases}
 
-    assert len(names) == 5
+    assert len(names) == 6
 
 
-@pytest.mark.parametrize("index", range(5))
+@pytest.mark.parametrize("index", range(6))
 def test_reference_case_matches_analytical_solution(cases, index):
     case = cases[index]
 

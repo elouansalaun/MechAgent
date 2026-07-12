@@ -16,22 +16,30 @@ from pydantic import BaseModel
 from mechagent.cad.reference import box, quarter_plate_with_hole
 from mechagent.core.config import SolversConfig
 from mechagent.core.logging import get_logger
+from mechagent.materials.fatigue import FatigueSettings, SNData
 from mechagent.materials.material import Material
+from mechagent.simulation.fatigue import LoadBlock, ReferenceStress, evaluate_fatigue
 from mechagent.simulation.mesh import MeshSettings
 from mechagent.simulation.problem import Constraint, StaticProblem, SurfaceForce
 from mechagent.simulation.static import load_fields, run_static_analysis
 
 log = get_logger(__name__)
 
-# Generic structural steel, only the elastic constants matter for these cases.
+# Generic structural steel. Its yield strength is set high so that the fatigue case can use
+# stresses above the endurance limit without failing the linear elastic check.
 VALIDATION_STEEL = Material(
     name="validation_steel",
     youngs_modulus=210000.0,
     poisson_ratio=0.3,
     density=7.85e-9,
-    yield_strength=355.0,
+    yield_strength=450.0,
     ultimate_strength=490.0,
+    fatigue=SNData(
+        strength_at_1e3=441.0, knee_strength=245.0, knee_cycles=1e6, endurance_limit=True
+    ),
 )
+# Specimen curve without any Marin correction, so the hand calculation stays simple.
+SPECIMEN = FatigueSettings(surface_finish="polished", reliability=0.5, size_factor=1.0)
 
 
 class ValidationCase(BaseModel):
@@ -77,6 +85,25 @@ def axial_bar(work_dir: Path, solvers: SolversConfig | None = None) -> list[Vali
     end = np.isclose(fields.coords[:, 0], length)
     area = side * side
     common = dict(analysis_verified=result.verified, run_dir=result.run_dir)
+
+    # Fatigue: cycles between -1 and 3 times the static load, so 200 MPa amplitude and 100 MPa
+    # mean. Hand calculation: Goodman, then the Basquin line through the S-N data points.
+    cycles, low, high = 1e5, -1.0, 3.0
+    sigma = force / area
+    amplitude, mean = (high - low) / 2 * sigma, (high + low) / 2 * sigma
+    sn = material.fatigue
+    equivalent = amplitude / (1 - mean / material.ultimate_strength)
+    exponent = np.log(sn.knee_strength / sn.strength_at_1e3) / np.log(sn.knee_cycles / 1e3)
+    cycles_to_failure = 1e3 * (equivalent / sn.strength_at_1e3) ** (1 / exponent)
+    fatigue = evaluate_fatigue(
+        ReferenceStress(positive=fields.stress),
+        fields.coords,
+        fields.evaluated,
+        [LoadBlock(low=low, high=high, cycles=cycles)],
+        material,
+        SPECIMEN,
+    )
+
     return [
         ValidationCase(
             name="axial_bar",
@@ -95,6 +122,16 @@ def axial_bar(work_dir: Path, solvers: SolversConfig | None = None) -> list[Vali
             reference_formula="sigma = F / A",
             reference=force / area,
             fem=float(fields.stress[:, 0].mean()),
+            tolerance=1e-3,
+            **common,
+        ),
+        ValidationCase(
+            name="axial_bar",
+            quantity="fatigue damage, 1e5 cycles at 200 MPa amplitude, 100 MPa mean",
+            unit="-",
+            reference_formula="Goodman Sa / (1 - Sm / Su), Basquin N, D = n / N",
+            reference=float(cycles / cycles_to_failure),
+            fem=fatigue.damage,
             tolerance=1e-3,
             **common,
         ),
