@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -106,7 +107,11 @@ def write_input(
 
 
 def run_calculix(
-    job_dir: Path, job_name: str, executable: str = "ccx", timeout_s: float = 600
+    job_dir: Path,
+    job_name: str,
+    executable: str = "ccx",
+    timeout_s: float = 600,
+    threads: int = 1,
 ) -> SolverRun:
     """Run ccx and decide from its outputs, not only its exit code, whether it succeeded."""
     ccx = shutil.which(executable)
@@ -118,7 +123,12 @@ def run_calculix(
     start = time.perf_counter()
     try:
         result = subprocess.run(
-            command, cwd=job_dir, capture_output=True, text=True, timeout=timeout_s
+            command,
+            cwd=job_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            env={**os.environ, "OMP_NUM_THREADS": str(threads)},
         )
         returncode, output = result.returncode, result.stdout + result.stderr
     except subprocess.TimeoutExpired as exc:

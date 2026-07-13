@@ -37,6 +37,7 @@ class SolversConfig(_Section):
     calculix_executable: str = "ccx"
     gmsh_executable: str = "gmsh"
     timeout_s: float = Field(600, gt=0)
+    threads: int = Field(4, ge=1, description="CPU threads for the CalculiX solver")
 
 
 class LLMConfig(_Section):

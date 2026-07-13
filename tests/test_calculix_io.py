@@ -150,3 +150,11 @@ def test_job_finished_without_results_is_not_a_success(tmp_path):
 
     assert not run.success
     assert any("job.frd" in e for e in run.errors)
+
+
+def test_solver_thread_count_is_passed_to_ccx(tmp_path):
+    fake = make_script(tmp_path, "fake_ccx", 'echo "threads $OMP_NUM_THREADS"')
+
+    run = run_calculix(tmp_path, "job", executable=str(fake), threads=3)
+
+    assert "threads 3" in run.log_file.read_text()

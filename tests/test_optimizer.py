@@ -17,6 +17,7 @@ from mechagent.optimization.optimizer import (
     constraint_values,
     optimize_bracket_design,
     optimize_material,
+    search_mesh,
 )
 from mechagent.simulation.convergence import ConvergenceStudy
 
@@ -84,8 +85,25 @@ def test_constraint_values(tmp_path):
 
     assert constraint_values(evaluation, names) == pytest.approx([0.25, 1.0, 1.0])
 
+    # With a 10 % search margin the criterion has to pass by 10 %.
+    passing = evaluation.model_copy(
+        update={"criteria": [check_above("static_safety_factor", 2.1, 2.0)]}
+    )
+    assert constraint_values(passing, names[:1], margin=0.1) == pytest.approx([0.05])
+
     evaluation.error = "solver failed"
     assert constraint_values(evaluation, names) == [1.0, 1.0, 1.0]
+
+
+def test_search_mesh_never_goes_below_the_floor():
+    thin = BracketParameters(base_thickness=3.0, flange_thickness=3.2)
+    thick = BracketParameters(base_thickness=10.0, flange_thickness=12.0)
+
+    coarse = search_mesh(thin, 2.5)
+
+    assert coarse.element_size == pytest.approx(2.5)
+    assert coarse.refinements["load_hole"] == pytest.approx(1.25)
+    assert search_mesh(thick, 2.5).element_size == pytest.approx(5.0)
 
 
 def test_optimizer_respects_constraints(fake_fe, tmp_path):
@@ -132,8 +150,46 @@ def test_material_comparison_and_decision_trace(fake_fe, monkeypatch, tmp_path):
     # Steel needs half the wall thickness but is three times heavier per mm in the fake model.
     assert result.chosen_material == "Al6061-T6"
     assert result.valid
-    assert any("lowest mass" in d and "S355J2" in d for d in result.decisions)
+    assert any("lightest valid design" in d and "S355J2" in d for d in result.decisions)
     assert (tmp_path / "optimization.json").exists()
+
+
+def test_next_candidate_is_verified_when_the_best_fails(fake_fe, monkeypatch, tmp_path):
+    calls = []
+
+    def first_fails(best, material, requirements, work_dir, **kwargs):
+        calls.append(best.mass_kg)
+        study, final = fake_verification(best, material, requirements, work_dir)
+        if len(calls) == 1:
+            final = final.model_copy(
+                update={"criteria": [check_above("static_safety_factor", 1.9, 2.0)]}
+            )
+        return study, final
+
+    monkeypatch.setattr(optimizer, "verify_final_design", first_fails)
+    requirements = REQUIREMENTS.model_copy(update={"candidate_materials": ["Al6061-T6"]})
+
+    result = optimize_bracket_design(requirements, tmp_path, n_trials=15, max_materials=1)
+
+    assert result.valid
+    assert len(calls) == 2 and calls[0] <= calls[1]
+    assert any("Candidate 1" in d and "static_safety_factor" in d for d in result.decisions)
+
+
+def test_no_candidate_passing_verification_is_reported(fake_fe, monkeypatch, tmp_path):
+    def always_fails(best, material, requirements, work_dir, **kwargs):
+        study, final = fake_verification(best, material, requirements, work_dir)
+        return study, final.model_copy(update={"error": "mesh failed"})
+
+    monkeypatch.setattr(optimizer, "verify_final_design", always_fails)
+    requirements = REQUIREMENTS.model_copy(update={"candidate_materials": ["Al6061-T6"]})
+
+    result = optimize_bracket_design(
+        requirements, tmp_path, n_trials=10, max_materials=1, max_verifications=2
+    )
+
+    assert not result.valid and result.final is None
+    assert "Another iteration is needed" in result.decisions[-1]
 
 
 def test_no_valid_design_is_reported(fake_fe, tmp_path):

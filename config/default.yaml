@@ -19,6 +19,7 @@ solvers:
   calculix_executable: ccx
   gmsh_executable: gmsh
   timeout_s: 600
+  threads: 4              # SPOOLES gains little beyond 4 threads on our models
 
 # Local LLM served by LM Studio through its OpenAI compatible API.
 llm:

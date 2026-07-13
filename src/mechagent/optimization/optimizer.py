@@ -5,8 +5,13 @@ criterion becomes an Optuna constraint (negative margin, <= 0 when satisfied) an
 verification checks add one more constraint counting the failed ones. Infeasible geometries
 and failed analyses are kept as infeasible trials, never given fake results.
 
-The best valid design over all materials is then verified again: a mesh convergence study
-and a full evaluation on the finer mesh. Only then is it reported as valid.
+The search runs on a mesh whose element size never drops below `min_search_element_size`:
+very thin trial designs would otherwise need meshes of several hundred thousand nodes. To
+keep a buffer against this coarser mesh, criteria must be met with `search_margin` to spare.
+
+The valid designs are then verified in order of objective, over all materials: a mesh
+convergence study on the full resolution mesh and a full evaluation on a finer one. The
+first design that passes is the result. Only then is it reported as valid.
 """
 
 from __future__ import annotations
@@ -27,12 +32,15 @@ from mechagent.materials.selection import SelectionResult, rank_materials
 from mechagent.optimization.evaluation import DesignEvaluation, evaluate_bracket, fatigue_blocks
 from mechagent.simulation.bracket import bracket_static_problem, default_bracket_mesh
 from mechagent.simulation.convergence import ConvergenceStudy, run_convergence_study
+from mechagent.simulation.mesh import MeshSettings
 from mechagent.simulation.static import remove_bulky_files
 
 log = get_logger(__name__)
 
 INFEASIBLE_OBJECTIVE = 1e6
 MAX_CONSTRAINT = 10.0
+MIN_SEARCH_ELEMENT_SIZE = 2.5  # mm
+SEARCH_MARGIN = 0.03  # criteria must pass by 3 % during the search
 
 
 class DesignVariable(BaseModel):
@@ -77,7 +85,7 @@ class TrialRecord(BaseModel):
     number: int
     params: dict[str, float]
     objective: float | None
-    valid: bool
+    valid: bool  # every check passed, criteria with the search margin to spare
     constraints: list[float]
     failed_checks: list[str] = []
     error: str | None = None
@@ -86,7 +94,11 @@ class TrialRecord(BaseModel):
 class MaterialOptimization(BaseModel):
     material: str
     trials: list[TrialRecord]
-    best: DesignEvaluation | None = None
+    valid_designs: list[DesignEvaluation] = []  # sorted by objective, best first
+
+    @property
+    def best(self) -> DesignEvaluation | None:
+        return self.valid_designs[0] if self.valid_designs else None
 
     @property
     def n_valid(self) -> int:
@@ -115,8 +127,17 @@ def constraint_names(requirements: DesignRequirements) -> list[str]:
     return names + ["verification"]
 
 
-def constraint_values(evaluation: DesignEvaluation, names: list[str]) -> list[float]:
-    """Optuna constraints, <= 0 when satisfied. Missing values count as violated."""
+def search_mesh(params: BracketParameters, min_element_size: float) -> MeshSettings:
+    mesh = default_bracket_mesh(params)
+    if mesh.element_size >= min_element_size:
+        return mesh
+    return mesh.scaled(min_element_size / mesh.element_size)
+
+
+def constraint_values(
+    evaluation: DesignEvaluation, names: list[str], margin: float = 0.0
+) -> list[float]:
+    """Optuna constraints, <= 0 when every criterion passes with `margin` to spare."""
     if evaluation.error is not None:
         return [1.0] * len(names)
     criteria = {c.name: c for c in evaluation.criteria}
@@ -125,7 +146,8 @@ def constraint_values(evaluation: DesignEvaluation, names: list[str]) -> list[fl
         if name == "verification":
             values.append(float(sum(not c.passed for c in evaluation.verification)))
         elif name in criteria and criteria[name].margin is not None:
-            values.append(float(np.clip(-criteria[name].margin, -MAX_CONSTRAINT, MAX_CONSTRAINT)))
+            value = margin - criteria[name].margin
+            values.append(float(np.clip(value, -MAX_CONSTRAINT, MAX_CONSTRAINT)))
         else:
             values.append(1.0)
     return values
@@ -139,6 +161,8 @@ def optimize_material(
     space: DesignSpace = DEFAULT_BRACKET_SPACE,
     seed: int = 0,
     solvers: SolversConfig | None = None,
+    min_search_element_size: float = MIN_SEARCH_ELEMENT_SIZE,
+    search_margin: float = SEARCH_MARGIN,
 ) -> MaterialOptimization:
     names = constraint_names(requirements)
     records: list[TrialRecord] = []
@@ -168,13 +192,18 @@ def optimize_material(
             return INFEASIBLE_OBJECTIVE
 
         evaluation = evaluate_bracket(
-            params, material, requirements, work_dir / f"trial_{trial.number:03d}", solvers=solvers
+            params,
+            material,
+            requirements,
+            work_dir / f"trial_{trial.number:03d}",
+            mesh=search_mesh(params, min_search_element_size),
+            solvers=solvers,
         )
         for result in (evaluation.static, evaluation.static_reversed):
             if result is not None:
                 remove_bulky_files(result.run_dir)
 
-        constraints = constraint_values(evaluation, names)
+        constraints = constraint_values(evaluation, names, search_margin)
         set_constraints(trial, constraints)
         value = evaluation.objective_value(requirements.objective)
         records.append(
@@ -182,7 +211,7 @@ def optimize_material(
                 number=trial.number,
                 params=values,
                 objective=value,
-                valid=evaluation.valid,
+                valid=evaluation.valid and max(constraints) <= 0,
                 constraints=constraints,
                 failed_checks=evaluation.failed_checks,
                 error=evaluation.error,
@@ -196,16 +225,20 @@ def optimize_material(
     study = optuna.create_study(direction="minimize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials)
 
-    valid = [r for r in records if r.valid]
-    best = evaluations[min(valid, key=lambda r: r.objective).number] if valid else None
+    valid = sorted((r for r in records if r.valid), key=lambda r: r.objective)
+    optimization = MaterialOptimization(
+        material=material.name,
+        trials=records,
+        valid_designs=[evaluations[r.number] for r in valid],
+    )
     log.info(
         "%s: %d valid designs out of %d trials, best %s",
         material.name,
         len(valid),
         n_trials,
-        f"{best.objective_value(requirements.objective):.4g}" if best else "none",
+        f"{valid[0].objective:.4g}" if valid else "none",
     )
-    return MaterialOptimization(material=material.name, trials=records, best=best)
+    return optimization
 
 
 def _required_cycles(requirements: DesignRequirements) -> float | None:
@@ -250,6 +283,7 @@ def optimize_bracket_design(
     seed: int = 0,
     materials: dict[str, Material] | None = None,
     solvers: SolversConfig | None = None,
+    max_verifications: int = 3,
 ) -> OptimizationResult:
     materials = materials or load_materials()
     fatigue_settings = requirements.fatigue.settings if requirements.fatigue else None
@@ -297,7 +331,10 @@ def optimize_bracket_design(
                 f"({optimization.n_valid} valid designs out of {n_trials} trials)."
             )
 
-    candidates = [m for m in result.materials if m.best is not None]
+    candidates = sorted(
+        (design for m in result.materials for design in m.valid_designs),
+        key=lambda design: design.objective_value(requirements.objective),
+    )
     if not candidates:
         decisions.append(
             "No valid design was found. The design space, the number of trials or the "
@@ -306,38 +343,40 @@ def optimize_bracket_design(
         _save(result, work_dir)
         return result
 
-    def best_value(m: MaterialOptimization) -> float:
-        return m.best.objective_value(requirements.objective)
-
-    winner = min(candidates, key=best_value)
-    result.chosen_material = winner.material
-    others = [
-        f"{m.material}: {_format(best_value(m), requirements.objective)}"
-        for m in candidates
-        if m is not winner
-    ]
-    reason = f"{winner.material} gives the lowest {requirements.objective} of the valid designs"
-    if others:
-        reason += f" ({', '.join(others)})"
-    decisions.append(reason + ".")
-
-    result.convergence, result.final = verify_final_design(
-        winner.best,
-        materials[winner.material],
-        requirements,
-        work_dir / "final_design",
-        solvers=solvers,
-    )
-    result.valid = result.final.valid and result.convergence.converged
-    if result.valid:
-        decisions.append("Final design verified: mesh convergence passed and every check passed.")
-    else:
-        failed = result.final.failed_checks + [
-            c.name for c in result.convergence.checks if not c.passed
-        ]
+    for rank, candidate in enumerate(candidates[:max_verifications], start=1):
+        value = _format(candidate.objective_value(requirements.objective), requirements.objective)
+        convergence, final = verify_final_design(
+            candidate,
+            materials[candidate.material],
+            requirements,
+            work_dir / f"final_design_{rank}",
+            solvers=solvers,
+        )
+        failed = final.failed_checks + [c.name for c in convergence.checks if not c.passed]
+        if final.error:
+            failed.append(final.error)
+        if not failed:
+            result.chosen_material = candidate.material
+            result.final, result.convergence, result.valid = final, convergence, True
+            others = sorted({m.material for m in result.materials if m.best} - {candidate.material})
+            best_word = "lightest" if requirements.objective == "mass" else "cheapest"
+            decision = (
+                f"Chose {candidate.material} ({value}), the {best_word} valid design that "
+                "passed the final verification: mesh convergence and every check on the "
+                "finer mesh."
+            )
+            if others:
+                decision += f" Also optimised: {', '.join(others)}."
+            decisions.append(decision)
+            break
         decisions.append(
-            "Final design NOT verified on the finer mesh, failed: " + ", ".join(failed) + ". "
-            "Another iteration is needed."
+            f"Candidate {rank} ({candidate.material}, {value}) failed the final verification: "
+            f"{', '.join(failed)}."
+        )
+    else:
+        decisions.append(
+            f"None of the {min(len(candidates), max_verifications)} best designs passed the "
+            "final verification. Another iteration is needed."
         )
     _save(result, work_dir)
     return result

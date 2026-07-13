@@ -19,6 +19,7 @@ def test_default_config_file_is_valid():
     assert settings.units.stress == "MPa"
     assert settings.solvers.calculix_executable == "ccx"
     assert settings.llm.provider == "lmstudio"
+    assert settings.solvers.threads == 4
 
 
 def test_partial_config_falls_back_on_defaults(write_config):

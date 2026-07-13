@@ -184,7 +184,9 @@ def run_static_analysis(
         title=problem.name,
     )
 
-    solver = run_calculix(run_dir, JOB_NAME, solvers.calculix_executable, solvers.timeout_s)
+    solver = run_calculix(
+        run_dir, JOB_NAME, solvers.calculix_executable, solvers.timeout_s, solvers.threads
+    )
     if not solver.success:
         raise SolverError(
             f"CalculiX failed for {problem.name}: {'; '.join(solver.errors)} "
