@@ -182,3 +182,22 @@ def test_material_without_sn_data_is_refused(al6061):
         evaluate_fatigue(
             reference, coords, evaluated, constant_amplitude(-1, 1e6), no_data, FatigueSettings()
         )
+
+
+def test_critical_node_with_infinite_life_is_the_most_loaded(steel):
+    field = np.zeros((3, 6))
+    field[:, 0] = [50.0, 120.0, 80.0]
+    coords = np.arange(9.0).reshape(3, 3)
+
+    result = evaluate_fatigue(
+        ReferenceStress(positive=field),
+        coords,
+        np.ones(3, dtype=bool),
+        constant_amplitude(-1, 1e6),
+        steel,
+        FatigueSettings(),
+    )
+
+    assert result.damage == 0.0
+    assert result.critical_location == (3.0, 4.0, 5.0)
+    assert result.critical_amplitude == pytest.approx(120.0)

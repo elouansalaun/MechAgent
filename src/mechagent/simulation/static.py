@@ -88,6 +88,15 @@ def make_run_dir(base: Path, name: str) -> Path:
     return run_dir
 
 
+BULKY_FILES = ("job.frd", "job.inp", "fields.npz", "job.12d", "spooles.out")
+
+
+def remove_bulky_files(run_dir: Path) -> None:
+    """Delete the large solver files of a run, keeping its JSON records, log and .dat file."""
+    for name in BULKY_FILES:
+        (run_dir / name).unlink(missing_ok=True)
+
+
 def load_fields(run_dir: Path) -> FieldResults:
     data = np.load(run_dir / "fields.npz")
     return FieldResults(**{key: data[key] for key in data.files})

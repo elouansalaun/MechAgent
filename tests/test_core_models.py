@@ -22,6 +22,11 @@ def test_checks_compare_against_limits():
     assert not check_above("sf", 1.9, 2.0).passed
 
 
+def test_check_margins_are_relative_to_the_limit():
+    assert check_below("disp", 0.4, 0.5).margin == pytest.approx(0.2)
+    assert check_above("sf", 1.5, 2.0).margin == pytest.approx(-0.25)
+
+
 def test_empty_check_list_is_not_a_success():
     assert not all_passed([])
 

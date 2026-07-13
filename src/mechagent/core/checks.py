@@ -16,17 +16,34 @@ class Check(BaseModel):
     limit: float | None = None
     unit: str = ""
     message: str = ""
+    margin: float | None = None  # relative distance to the limit, negative when failed
+
+
+def _margin(slack: float, limit: float) -> float:
+    return slack / abs(limit) if limit != 0 else slack
 
 
 def check_below(name: str, value: float, limit: float, unit: str = "", message: str = "") -> Check:
     return Check(
-        name=name, passed=bool(value <= limit), value=value, limit=limit, unit=unit, message=message
+        name=name,
+        passed=bool(value <= limit),
+        value=value,
+        limit=limit,
+        unit=unit,
+        message=message,
+        margin=_margin(limit - value, limit),
     )
 
 
 def check_above(name: str, value: float, limit: float, unit: str = "", message: str = "") -> Check:
     return Check(
-        name=name, passed=bool(value >= limit), value=value, limit=limit, unit=unit, message=message
+        name=name,
+        passed=bool(value >= limit),
+        value=value,
+        limit=limit,
+        unit=unit,
+        message=message,
+        margin=_margin(value - limit, limit),
     )
 
 
