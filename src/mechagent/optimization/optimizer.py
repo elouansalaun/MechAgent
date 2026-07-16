@@ -10,8 +10,8 @@ very thin trial designs would otherwise need meshes of several hundred thousand 
 keep a buffer against this coarser mesh, criteria must be met with `search_margin` to spare.
 
 The valid designs are then verified in order of objective, over all materials: a mesh
-convergence study on the full resolution mesh and a full evaluation on a finer one. The
-first design that passes is the result. Only then is it reported as valid.
+convergence study from the search mesh to a 0.7 times finer mesh, and a full evaluation on
+the finer mesh. The first design that passes is the result. Only then is it reported valid.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import optuna
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from mechagent.cad.bracket import BracketParameters, build_bracket
 from mechagent.core.config import SolversConfig
@@ -31,8 +31,9 @@ from mechagent.materials.material import Material
 from mechagent.materials.selection import SelectionResult, rank_materials
 from mechagent.optimization.evaluation import DesignEvaluation, evaluate_bracket, fatigue_blocks
 from mechagent.simulation.bracket import bracket_static_problem, default_bracket_mesh
+from mechagent.simulation.calculix import SolverError
 from mechagent.simulation.convergence import ConvergenceStudy, run_convergence_study
-from mechagent.simulation.mesh import MeshSettings
+from mechagent.simulation.mesh import MeshError, MeshSettings
 from mechagent.simulation.static import remove_bulky_files
 
 log = get_logger(__name__)
@@ -231,6 +232,10 @@ def optimize_material(
         trials=records,
         valid_designs=[evaluations[r.number] for r in valid],
     )
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "trials.json").write_text(
+        TypeAdapter(list[TrialRecord]).dump_json(records, indent=2).decode()
+    )
     log.info(
         "%s: %d valid designs out of %d trials, best %s",
         material.name,
@@ -254,15 +259,30 @@ def verify_final_design(
     work_dir: Path,
     refinement_factor: float = 0.7,
     solvers: SolversConfig | None = None,
-) -> tuple[ConvergenceStudy, DesignEvaluation]:
-    """Mesh convergence on the chosen design, then a full evaluation on the finer mesh."""
+    min_search_element_size: float = MIN_SEARCH_ELEMENT_SIZE,
+) -> tuple[ConvergenceStudy | None, DesignEvaluation]:
+    """Convergence from the search mesh to a finer one, then a full evaluation on the finer one.
+
+    A meshing or solver failure is returned as an evaluation error, the design is then simply
+    not verified.
+    """
     params = best.params
-    mesh = default_bracket_mesh(params)
-    geometry = build_bracket(params, work_dir / "geometry")
-    problem = bracket_static_problem(geometry, params, material, requirements.force, mesh)
-    study, _ = run_convergence_study(
-        problem, work_dir / "convergence", refinement_factor, n_levels=2, solvers=solvers
-    )
+    mesh = search_mesh(params, min_search_element_size)
+    try:
+        geometry = build_bracket(params, work_dir / "geometry")
+        problem = bracket_static_problem(geometry, params, material, requirements.force, mesh)
+        study, _ = run_convergence_study(
+            problem, work_dir / "convergence", refinement_factor, n_levels=2, solvers=solvers
+        )
+    except (MeshError, SolverError) as exc:
+        failed = DesignEvaluation(
+            params=params,
+            material=material.name,
+            run_dir=work_dir,
+            error=f"convergence study failed: {exc}",
+        )
+        return None, failed
+
     final = evaluate_bracket(
         params,
         material,
@@ -352,7 +372,9 @@ def optimize_bracket_design(
             work_dir / f"final_design_{rank}",
             solvers=solvers,
         )
-        failed = final.failed_checks + [c.name for c in convergence.checks if not c.passed]
+        failed = list(final.failed_checks)
+        if convergence is not None:
+            failed += [c.name for c in convergence.checks if not c.passed]
         if final.error:
             failed.append(final.error)
         if not failed:

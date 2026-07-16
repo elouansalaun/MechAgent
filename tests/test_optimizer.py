@@ -116,6 +116,7 @@ def test_optimizer_respects_constraints(fake_fe, tmp_path):
     assert best.valid
     assert 12.0 <= walls < 13.0  # close to the constrained optimum at 12 mm
     assert len(result.trials) == 40
+    assert (tmp_path / "trials.json").exists()
     assert all(t.valid == (max(t.constraints) <= 0) for t in result.trials if t.error is None)
 
 
@@ -220,3 +221,18 @@ def test_real_trials_keep_records_and_drop_solver_files(tmp_path, require_ccx):
         assert (static / "result.json").exists()
         assert not (static / "job.frd").exists() and not (static / "fields.npz").exists()
         assert trial.objective is not None
+
+
+def test_solver_failure_during_verification_is_not_a_crash(monkeypatch, tmp_path):
+    def broken_convergence(*args, **kwargs):
+        raise optimizer.SolverError("TIMEOUT after 600 s")
+
+    monkeypatch.setattr(optimizer, "run_convergence_study", broken_convergence)
+    best = DesignEvaluation(params=BracketParameters(), material="Al6061-T6", run_dir=tmp_path)
+
+    study, final = optimizer.verify_final_design(
+        best, load_materials()["Al6061-T6"], REQUIREMENTS, tmp_path
+    )
+
+    assert study is None
+    assert not final.valid and "TIMEOUT" in final.error
