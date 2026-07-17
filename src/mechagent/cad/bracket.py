@@ -13,6 +13,8 @@ Local frame of the bracket (mm):
 - The back face of the flange is the plane x = 0, the bottom of the base is z = 0.
 - The bracket is centred on y = 0, the two bolt holes sit at y = +/- bolt_hole_spacing / 2.
 - Optional triangular ribs (gussets) join the base and the flange along both side edges.
+  Their concave edges (toes and junctions with the plates) are filleted like a machined part,
+  a sharp re-entrant corner would give a stress that never converges with mesh refinement.
 """
 
 from __future__ import annotations
@@ -45,6 +47,9 @@ class BracketParameters(BaseModel):
     load_hole_height: float = Field(60.0, gt=0, description="z of the load hole axis, mm")
     rib_thickness: float = Field(0.0, ge=0, description="mm, 0 means no ribs")
     rib_size: float = Field(40.0, gt=0, description="length of both rib legs from the corner, mm")
+    rib_fillet_radius: float = Field(
+        2.0, ge=0, description="fillet on the rib toes and junctions, typical tool radius, mm"
+    )
 
     @model_validator(mode="after")
     def _check_feasible(self) -> BracketParameters:
@@ -58,7 +63,9 @@ class BracketParameters(BaseModel):
         d_bolt, d_load = self.bolt_hole_diameter, self.load_hole_diameter
         bolt_margin = d_bolt / 2 + MIN_LIGAMENT_RATIO * d_bolt
         load_margin = d_load / 2 + MIN_LIGAMENT_RATIO * d_load
-        side_limit = self.width / 2 - self.rib_thickness
+        side_limit = self.width / 2
+        if self.rib_thickness > 0:
+            side_limit -= self.rib_thickness + self.rib_fillet_radius
 
         if self.flange_thickness >= self.base_length:
             problems.append("flange thickness must be smaller than base length")
@@ -96,6 +103,8 @@ class BracketParameters(BaseModel):
                 problems.append("ribs taller than the flange")
             if self.rib_size <= self.fillet_radius:
                 problems.append("ribs smaller than the fillet")
+            if self.rib_fillet_radius > self.rib_size / 4:
+                problems.append("rib fillet radius too large for the ribs")
         return problems
 
 
@@ -121,6 +130,32 @@ def bracket_holes(params: BracketParameters) -> list[HoleFeature]:
     return holes
 
 
+def _rib_concave_edges(solid: cq.Solid, params: BracketParameters) -> list[cq.Edge]:
+    """Edges where the ribs meet the base, the flange and the corner fillet, and the rib toes."""
+    tb, tf, s = params.base_thickness, params.flange_thickness, params.rib_size
+    inner_y = params.width / 2 - params.rib_thickness
+    edges = []
+    for face in solid.Faces():
+        box = face.BoundingBox()
+        on_inner_side = any(
+            abs(box.ymin - y) < 1e-6 and abs(box.ymax - y) < 1e-6 for y in (-inner_y, inner_y)
+        )
+        if face.geomType() == "PLANE" and on_inner_side:
+            for edge in face.Edges():
+                ends = (edge.startPoint(), edge.endPoint())
+                # The sloped free edge x + z = tf + tb + s is convex, it stays sharp.
+                if not all(abs(p.x + p.z - (tf + tb + s)) < 1e-6 for p in ends):
+                    edges.append(edge)
+
+    toes = [(tf + s, tb), (tf, tb + s)]
+    for edge in solid.Edges():
+        a, b = edge.startPoint(), edge.endPoint()
+        along_y = abs(a.x - b.x) < 1e-9 and abs(a.z - b.z) < 1e-9 and abs(a.y - b.y) > 1e-9
+        if along_y and any(abs(a.x - x) < 1e-6 and abs(a.z - z) < 1e-6 for x, z in toes):
+            edges.append(edge)
+    return edges
+
+
 def build_bracket_solid(params: BracketParameters) -> cq.Solid:
     tb, tf = params.base_thickness, params.flange_thickness
     length, height, width = params.base_length, params.flange_height, params.width
@@ -143,6 +178,10 @@ def build_bracket_solid(params: BracketParameters) -> cq.Solid:
                 .extrude(t / 2, both=True)
             )
             body = body.union(rib)
+        if params.rib_fillet_radius > 0:
+            solid = single_solid(body)
+            edges = _rib_concave_edges(solid, params)
+            body = cq.Workplane("XY").add(solid.fillet(params.rib_fillet_radius, edges))
 
     for hole in bracket_holes(params):
         # Cylinders start 1 mm outside the part so the cut goes cleanly through.
@@ -154,18 +193,29 @@ def build_bracket_solid(params: BracketParameters) -> cq.Solid:
     return single_solid(body)
 
 
+def rib_fillet_faces(solid: cq.Solid, params: BracketParameters) -> list[cq.Face]:
+    """Curved faces lying entirely in the rib zones, i.e. the rib fillets."""
+    if params.rib_thickness == 0 or params.rib_fillet_radius == 0:
+        return []
+    limit = params.width / 2 - params.rib_thickness - params.rib_fillet_radius - 1e-6
+    faces = []
+    for face in solid.Faces():
+        box = face.BoundingBox()
+        if face.geomType() != "PLANE" and (box.ymin >= limit or box.ymax <= -limit):
+            faces.append(face)
+    return faces
+
+
 def build_bracket(params: BracketParameters, out_dir: Path, name: str = "bracket") -> GeometryModel:
-    """Build the bracket, export it to BREP and describe its bolt and load hole faces."""
+    """Build the bracket, export it to BREP and describe its holes and rib fillet faces."""
     solid = build_bracket_solid(params)
     holes = bracket_holes(params)
 
-    bolt_faces = [f for h in holes if h.name.startswith("bolt") for f in hole_faces(solid, h)]
-    load_faces = hole_faces(solid, next(h for h in holes if h.name == "load_hole"))
-
-    return export_geometry(
-        solid,
-        name,
-        {"bolt_holes": bolt_faces, "load_hole": load_faces},
-        out_dir,
-        holes=holes,
-    )
+    groups = {
+        "bolt_holes": [f for h in holes if h.name.startswith("bolt") for f in hole_faces(solid, h)],
+        "load_hole": hole_faces(solid, next(h for h in holes if h.name == "load_hole")),
+    }
+    fillets = rib_fillet_faces(solid, params)
+    if fillets:
+        groups["rib_fillets"] = fillets
+    return export_geometry(solid, name, groups, out_dir, holes=holes)

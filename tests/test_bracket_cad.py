@@ -3,7 +3,11 @@ import math
 import pytest
 from pydantic import ValidationError
 
-from mechagent.cad.bracket import BracketParameters, build_bracket, build_bracket_solid
+from mechagent.cad.bracket import (
+    BracketParameters,
+    build_bracket,
+    build_bracket_solid,
+)
 
 
 def expected_volume(p: BracketParameters) -> float:
@@ -25,8 +29,14 @@ def expected_volume(p: BracketParameters) -> float:
     [
         {"fillet_radius": 0.0},
         {},
-        {"rib_thickness": 3.0},
-        {"width": 80.0, "base_thickness": 10.0, "flange_thickness": 6.0, "rib_thickness": 4.0},
+        {"rib_thickness": 3.0, "rib_fillet_radius": 0.0},
+        {
+            "width": 80.0,
+            "base_thickness": 10.0,
+            "flange_thickness": 6.0,
+            "rib_thickness": 4.0,
+            "rib_fillet_radius": 0.0,
+        },
     ],
 )
 def test_volume_matches_hand_calculation(overrides):
@@ -64,6 +74,26 @@ def test_bounding_box_and_holes(tmp_path):
     assert [h.name for h in geometry.holes] == ["bolt_hole_1", "bolt_hole_2", "load_hole"]
 
 
+def test_rib_fillets_add_a_little_material_and_a_face_group(tmp_path):
+    sharp = BracketParameters(rib_thickness=3.0, rib_fillet_radius=0.0)
+    rounded = sharp.model_copy(update={"rib_fillet_radius": 2.0})
+
+    added = build_bracket_solid(rounded).Volume() - build_bracket_solid(sharp).Volume()
+    geometry = build_bracket(rounded, tmp_path)
+
+    # Each concave edge gains at most (1 - pi/4) r^2 per unit length, the toes even less.
+    r, s, t = 2.0, rounded.rib_size, rounded.rib_thickness
+    edge_length = 2 * (2 * s + 2 * t)
+    assert 0 < added < (1 - math.pi / 4) * r**2 * edge_length
+    assert len(geometry.face_groups["rib_fillets"]) >= 10
+    for face in geometry.face_groups["rib_fillets"]:
+        assert abs(face.center[1]) > rounded.width / 2 - t - r - 1e-6
+
+
+def test_no_rib_fillet_group_without_ribs(tmp_path):
+    assert "rib_fillets" not in build_bracket(BracketParameters(), tmp_path).face_groups
+
+
 @pytest.mark.parametrize(
     "overrides, message",
     [
@@ -74,6 +104,7 @@ def test_bounding_box_and_holes(tmp_path):
         ({"fillet_radius": 40.0}, "fillet radius"),
         ({"rib_thickness": 5.0, "rib_size": 90.0}, "ribs longer"),
         ({"rib_thickness": 10.0, "bolt_hole_spacing": 36.0}, "side edges or ribs"),
+        ({"rib_thickness": 3.0, "rib_size": 20.0, "rib_fillet_radius": 6.0}, "rib fillet"),
     ],
 )
 def test_infeasible_parameters_are_rejected(overrides, message):

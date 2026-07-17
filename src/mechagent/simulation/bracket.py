@@ -21,10 +21,10 @@ BRACKET_ASSUMPTIONS = [
 def default_bracket_mesh(params: BracketParameters) -> MeshSettings:
     """About two quadratic elements through the thinnest wall, finer around the holes."""
     size = min(params.base_thickness, params.flange_thickness) / 2
-    return MeshSettings(
-        element_size=size,
-        refinements={"bolt_holes": size / 2, "load_hole": size / 2},
-    )
+    refinements = {"bolt_holes": size / 2, "load_hole": size / 2}
+    if params.rib_thickness > 0 and params.rib_fillet_radius > 0:
+        refinements["rib_fillets"] = size / 2
+    return MeshSettings(element_size=size, refinements=refinements)
 
 
 def bracket_static_problem(
