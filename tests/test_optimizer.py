@@ -13,6 +13,7 @@ from mechagent.optimization.optimizer import (
     DEFAULT_BRACKET_SPACE,
     DesignSpace,
     DesignVariable,
+    _closest_limit,
     constraint_names,
     constraint_values,
     optimize_bracket_design,
@@ -152,6 +153,7 @@ def test_material_comparison_and_decision_trace(fake_fe, monkeypatch, tmp_path):
     assert result.chosen_material == "Al6061-T6"
     assert result.valid
     assert any("lightest valid design" in d and "S355J2" in d for d in result.decisions)
+    assert any(d.startswith("Closest requirement: static_safety_factor") for d in result.decisions)
     assert (tmp_path / "optimization.json").exists()
 
 
@@ -236,3 +238,18 @@ def test_solver_failure_during_verification_is_not_a_crash(monkeypatch, tmp_path
 
     assert study is None
     assert not final.valid and "TIMEOUT" in final.error
+
+
+def test_closest_limit_flags_an_unconverged_search(tmp_path):
+    design = DesignEvaluation(
+        params=BracketParameters(),
+        material="x",
+        run_dir=tmp_path,
+        criteria=[check_above("static_safety_factor", 3.0, 2.0), check_above("fatigue", 1.3, 1.0)],
+    )
+
+    text = _closest_limit(design)
+
+    assert "fatigue with 30 % margin" in text and "not converged" in text
+    tight = design.model_copy(update={"criteria": [check_above("fatigue", 1.05, 1.0)]})
+    assert "not converged" not in _closest_limit(tight)

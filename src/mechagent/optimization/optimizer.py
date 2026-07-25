@@ -16,6 +16,7 @@ the finer mesh. The first design that passes is the result. Only then is it repo
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,7 @@ INFEASIBLE_OBJECTIVE = 1e6
 MAX_CONSTRAINT = 10.0
 MIN_SEARCH_ELEMENT_SIZE = 2.5  # mm
 SEARCH_MARGIN = 0.03  # criteria must pass by 3 % during the search
+CONVERGED_MARGIN = 0.10  # above this on every criterion, the search has not found the limit
 
 
 class DesignVariable(BaseModel):
@@ -222,7 +224,12 @@ def optimize_material(
         return value if value is not None else INFEASIBLE_OBJECTIVE
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    sampler = optuna.samplers.TPESampler(seed=seed, n_startup_trials=max(5, n_trials // 3))
+    # Multivariate TPE models the wall thicknesses together, group handles the optional ribs.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
+        sampler = optuna.samplers.TPESampler(
+            seed=seed, n_startup_trials=max(5, n_trials // 3), multivariate=True, group=True
+        )
     study = optuna.create_study(direction="minimize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials)
 
@@ -390,6 +397,7 @@ def optimize_bracket_design(
             if others:
                 decision += f" Also optimised: {', '.join(others)}."
             decisions.append(decision)
+            decisions.append(_closest_limit(final))
             break
         decisions.append(
             f"Candidate {rank} ({candidate.material}, {value}) failed the final verification: "
@@ -402,6 +410,17 @@ def optimize_bracket_design(
         )
     _save(result, work_dir)
     return result
+
+
+def _closest_limit(design: DesignEvaluation) -> str:
+    closest = min(design.criteria, key=lambda c: c.margin)
+    text = f"Closest requirement: {closest.name} with {100 * closest.margin:.0f} % margin."
+    if closest.margin > CONVERGED_MARGIN:
+        text += (
+            " No requirement is near its limit, so the search has probably not converged: "
+            "more trials should give a better design."
+        )
+    return text
 
 
 def _format(value: float, objective: str) -> str:
