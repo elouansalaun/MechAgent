@@ -9,7 +9,9 @@ from mechagent.simulation.mesh import MeshSettings
 pytestmark = pytest.mark.external
 
 COARSE = MeshSettings(element_size=6.0, refinements={"bolt_holes": 3.0, "load_hole": 3.0})
-STRONG = BracketParameters(base_thickness=12, flange_thickness=12, rib_thickness=3, fillet_radius=8)
+STRONG = BracketParameters(
+    base_thickness=12, flange_thickness=12, width=66, rib_thickness=3, fillet_radius=8
+)
 
 
 @pytest.fixture(scope="module")
