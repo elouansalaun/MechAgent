@@ -13,6 +13,8 @@ from mechagent.optimization.optimizer import (
     DEFAULT_BRACKET_SPACE,
     DesignSpace,
     DesignVariable,
+    MaterialOptimization,
+    _close_alternatives,
     _closest_limit,
     constraint_names,
     constraint_values,
@@ -154,6 +156,9 @@ def test_material_comparison_and_decision_trace(fake_fe, monkeypatch, tmp_path):
     assert result.valid
     assert any("lightest valid design" in d and "S355J2" in d for d in result.decisions)
     assert any(d.startswith("Closest requirement: static_safety_factor") for d in result.decisions)
+    assert any(
+        d.startswith("S355J2: best valid") and "Closest requirement" in d for d in result.decisions
+    )
     assert (tmp_path / "optimization.json").exists()
 
 
@@ -253,3 +258,24 @@ def test_closest_limit_flags_an_unconverged_search(tmp_path):
     assert "fatigue with 30 % margin" in text and "not converged" in text
     tight = design.model_copy(update={"criteria": [check_above("fatigue", 1.05, 1.0)]})
     assert "not converged" not in _closest_limit(tight)
+
+
+def test_close_alternatives_are_reported_with_their_cost(tmp_path):
+    def design(material, mass):
+        return DesignEvaluation(
+            params=BracketParameters(), material=material, run_dir=tmp_path, mass_kg=mass
+        )
+
+    chosen = design("Ti-6Al-4V", 0.232)
+    materials = [
+        MaterialOptimization(material="Ti-6Al-4V", trials=[], valid_designs=[chosen]),
+        MaterialOptimization(
+            material="Al6061-T6", trials=[], valid_designs=[design("Al6061-T6", 0.234)]
+        ),
+        MaterialOptimization(material="S355J2", trials=[], valid_designs=[design("S355J2", 0.4)]),
+    ]
+
+    notes = _close_alternatives(chosen, materials, "mass")
+
+    assert len(notes) == 1
+    assert "Al6061-T6 at 234.0 g (+0.9 %)" in notes[0]

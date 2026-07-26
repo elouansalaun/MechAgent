@@ -44,6 +44,7 @@ MAX_CONSTRAINT = 10.0
 MIN_SEARCH_ELEMENT_SIZE = 2.5  # mm
 SEARCH_MARGIN = 0.03  # criteria must pass by 3 % during the search
 CONVERGED_MARGIN = 0.10  # above this on every criterion, the search has not found the limit
+CLOSE_ALTERNATIVE = 0.05  # other materials within 5 % of the chosen objective are reported
 
 
 class DesignVariable(BaseModel):
@@ -355,7 +356,8 @@ def optimize_bracket_design(
             value = optimization.best.objective_value(requirements.objective)
             decisions.append(
                 f"{ranked.name}: best valid design {_format(value, requirements.objective)} "
-                f"({optimization.n_valid} valid designs out of {n_trials} trials)."
+                f"({optimization.n_valid} valid designs out of {n_trials} trials). "
+                + _closest_limit(optimization.best)
             )
 
     candidates = sorted(
@@ -398,6 +400,7 @@ def optimize_bracket_design(
                 decision += f" Also optimised: {', '.join(others)}."
             decisions.append(decision)
             decisions.append(_closest_limit(final))
+            decisions += _close_alternatives(candidate, result.materials, requirements.objective)
             break
         decisions.append(
             f"Candidate {rank} ({candidate.material}, {value}) failed the final verification: "
@@ -421,6 +424,31 @@ def _closest_limit(design: DesignEvaluation) -> str:
             "more trials should give a better design."
         )
     return text
+
+
+def _close_alternatives(
+    chosen: DesignEvaluation, materials: list[MaterialOptimization], objective: str
+) -> list[str]:
+    """Best designs of other materials that are within the noise of the search."""
+    value = chosen.objective_value(objective)
+    notes = []
+    for optimization in materials:
+        other = optimization.best
+        if other is None or other.material == chosen.material:
+            continue
+        other_value = other.objective_value(objective)
+        gap = other_value / value - 1
+        if gap <= CLOSE_ALTERNATIVE:
+            text = (
+                f"Close alternative: {other.material} at {_format(other_value, objective)} "
+                f"({100 * gap:+.1f} %), not verified on the finer mesh."
+            )
+            if chosen.cost and other.cost:
+                text += (
+                    f" Indicative cost {other.cost.total:.0f} EUR vs {chosen.cost.total:.0f} EUR."
+                )
+            notes.append(text)
+    return notes
 
 
 def _format(value: float, objective: str) -> str:
