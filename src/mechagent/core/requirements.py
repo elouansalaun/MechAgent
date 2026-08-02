@@ -54,6 +54,9 @@ class DesignRequirements(BaseModel):
     max_displacement: float | None = Field(None, gt=0, description="mm")
     max_mass: float | None = Field(None, gt=0, description="kg")
     fatigue: FatigueRequirement | None = None
+    min_buckling_factor: float | None = Field(
+        None, gt=0, description="flange buckling screening, None when not required"
+    )
     objective: Literal["mass", "cost"] = "mass"
     candidate_materials: list[str] | None = None  # names or categories, None means all
     manufacturing: Literal["cnc_machining"] = "cnc_machining"

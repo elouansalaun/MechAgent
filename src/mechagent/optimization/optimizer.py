@@ -126,6 +126,8 @@ def constraint_names(requirements: DesignRequirements) -> list[str]:
         names.append("max_displacement")
     if requirements.max_mass is not None:
         names.append("max_mass")
+    if requirements.min_buckling_factor is not None:
+        names.append("buckling_factor")
     if requirements.fatigue is not None:
         names += ["fatigue_damage", "fatigue_safety_factor"]
     return names + ["verification"]

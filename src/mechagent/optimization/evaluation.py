@@ -26,6 +26,7 @@ from mechagent.core.requirements import DesignRequirements
 from mechagent.materials.cost import CostEstimate, CostModel, estimate_cost
 from mechagent.materials.material import Material
 from mechagent.simulation.bracket import bracket_static_problem
+from mechagent.simulation.buckling import flange_compression, flange_critical_load
 from mechagent.simulation.calculix import SolverError
 from mechagent.simulation.fatigue import (
     FatigueResult,
@@ -72,6 +73,21 @@ def fatigue_blocks(requirements: DesignRequirements):
     if fatigue.cycles is not None:
         return constant_amplitude(fatigue.load_ratio, fatigue.cycles)
     return blocks_from_history(fatigue.history, fatigue.history_repeats)
+
+
+def _buckling_criterion(
+    params: BracketParameters, material: Material, requirements: DesignRequirements
+) -> Check:
+    min_factor = requirements.fatigue.min_load_factor if requirements.fatigue else 1.0
+    compression = flange_compression(requirements.force[2], min_factor)
+    critical = flange_critical_load(params, material)
+    factor = critical / compression if compression > 0 else float("inf")
+    return check_above(
+        "buckling_factor",
+        factor,
+        requirements.min_buckling_factor,
+        message="Euler fixed-free column screening of the flange (conservative)",
+    )
 
 
 def _static_criteria(
@@ -145,6 +161,8 @@ def evaluate_bracket(
             for c in evaluation.static_reversed.checks
         ]
     evaluation.criteria = _static_criteria(statics, requirements, evaluation.mass_kg)
+    if requirements.min_buckling_factor is not None:
+        evaluation.criteria.append(_buckling_criterion(params, material, requirements))
 
     if fatigue is not None:
         if material.fatigue is None:

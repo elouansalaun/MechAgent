@@ -67,6 +67,8 @@ def test_constraint_names_follow_the_requirements():
     )
 
     assert constraint_names(REQUIREMENTS) == ["static_safety_factor", "verification"]
+    buckling = REQUIREMENTS.model_copy(update={"min_buckling_factor": 3.0})
+    assert constraint_names(buckling) == ["static_safety_factor", "buckling_factor", "verification"]
     assert constraint_names(requirements) == [
         "static_safety_factor",
         "max_displacement",
