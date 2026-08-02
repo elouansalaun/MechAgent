@@ -4,7 +4,8 @@ Run from the project root:  python examples/bracket_optimization.py [n_trials]
 
 Requirements (from the project description): 2000 N vertical pin load applied cyclically,
 1 million cycles, max displacement 0.5 mm, static safety factor 2. We assume a pulsating
-load (R = 0) and a machined surface. It takes about 20 minutes with 40 trials per material.
+load (R = 0) and a machined surface. It takes about 15 minutes with 40 trials per material
+and 30 minutes with 80.
 """
 
 import sys

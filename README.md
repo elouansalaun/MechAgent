@@ -36,9 +36,9 @@ The first supported component is a mechanical mounting bracket, optimized with p
 | -------------------------- | ------------------------------------------------------------ | -------- |
 | `mechagent.core`           | Configuration, logging, units, geometry interface, checks    | Done     |
 | `mechagent.cad`            | Parametric bracket and reference geometries with CadQuery    | Done     |
-| `mechagent.simulation`     | Gmsh meshing, CalculiX static FEM, convergence, validation   | Static done, fatigue in Phase 2 |
-| `mechagent.materials`      | Material model (done), database and selection (Phase 2)      | Partial  |
-| `mechagent.optimization`   | Parametric optimization with Optuna                          | Phase 2  |
+| `mechagent.simulation`     | Gmsh, CalculiX static FEM, rainflow, S-N fatigue, validation | Done     |
+| `mechagent.materials`      | Material database, S-N curves, ranking, cost model           | Done     |
+| `mechagent.optimization`   | Design evaluation and parametric optimization with Optuna    | Done     |
 | `mechagent.agent`          | LangGraph orchestration of the engineering workflow          | Phase 3  |
 | `mechagent.reporting`      | Engineering report and 3D visualizations                     | Phase 4  |
 | `mechagent.app`            | Streamlit user interface                                     | Phase 4  |
@@ -46,8 +46,9 @@ The first supported component is a mechanical mounting bracket, optimized with p
 Other folders:
 
 - `config/` holds the YAML configuration (`default.yaml`).
-- `data/` holds input data such as material properties and S-N curves.
-- `docs/` holds the implementation notes, see [docs/simulation.md](docs/simulation.md).
+- `data/` holds the material database (`materials.yaml`, typical handbook values).
+- `docs/` holds the implementation notes: [simulation](docs/simulation.md),
+  [materials and fatigue](docs/fatigue.md), [optimization](docs/optimization.md).
 - `examples/` holds runnable examples.
 - `tests/` holds the pytest suite, including smoke tests on the real solvers.
 - `runs/` and `logs/` are created at runtime and ignored by git.
@@ -144,6 +145,26 @@ print(result.design_von_mises, result.max_displacement, result.verified)
 How the chain works, which checks it runs and what its limits are is described in
 [docs/simulation.md](docs/simulation.md).
 
+## Optimizing the bracket
+
+```bash
+python examples/bracket_optimization.py 40
+```
+
+This optimizes a bracket for minimum mass under a 2000 N cyclic pin load: 1e6 cycles, max
+displacement 0.5 mm, static safety factor 2. The script:
+
+1. ranks the six materials of `data/materials.yaml`
+2. optimizes the geometry of the three best ones with Optuna
+3. picks the lightest valid design
+4. verifies it again on a finer mesh
+
+It prints the decision trace, the final design, every check and every assumption. It takes
+about 15 minutes with 40 trials per material and 30 minutes with 80. The
+fatigue method (S-N, Marin factors, mean stress correction, Miner, rainflow) is described
+in [docs/fatigue.md](docs/fatigue.md), and the optimization in
+[docs/optimization.md](docs/optimization.md).
+
 ## Tests
 
 ```bash
@@ -151,7 +172,8 @@ pytest
 ```
 
 Tests marked `external` run the real tools: CalculiX analyses of the bracket, the
-analytical validation cases, a convergence study and an LM Studio prompt. When a tool is
+analytical validation cases (static and fatigue), a convergence study, design evaluations,
+a short real optimization and an LM Studio prompt. When a tool is
 missing these tests are skipped with a visible reason rather than passing. To run only the
 fast unit tests:
 
@@ -165,7 +187,7 @@ pytest -m "not external"
 - **Phase 1**: parametric bracket CAD, Gmsh meshing, CalculiX static analysis, result
   parsing, mesh convergence and analytical validation cases (done).
 - **Phase 2**: material database, S-N fatigue with mean stress correction and Miner damage,
-  Optuna parametric optimization.
+  rainflow counting, cost model, Optuna parametric optimization (done).
 - **Phase 3**: LangGraph agent: requirement interpretation, missing-data detection, analysis
   selection, iteration decisions and a decision trace.
 - **Phase 4**: Streamlit interface, PyVista visualizations and the engineering report.

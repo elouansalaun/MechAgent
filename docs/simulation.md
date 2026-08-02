@@ -44,8 +44,16 @@ The bracket is an L profile extruded along y, with an optional inner fillet, two
 triangular ribs along the side edges, two bolt holes in the base (axis z) and one load hole
 in the flange (axis x). The local frame is described at the top of `cad/bracket.py`.
 
+The concave edges of the ribs (their toes and their junctions with the base, the flange
+and the corner fillet) get a 2 mm fillet, like the tool radius of a machined part. A sharp
+rib toe is a re-entrant corner. On the optimised designs its stress rose by 8 to 9 % from
+one mesh to the next and never converged. With the fillet the change was 0.3 to 3.4 %. The
+fillet faces form the `rib_fillets` face group and get the same mesh refinement as the
+holes.
+
 `BracketParameters` refuses infeasible designs before any CAD work. Every hole must keep
-a ligament of at least half its diameter to edges, the fillet, the ribs and the other holes.
+a ligament of at least half its diameter to edges, the fillet, the ribs (fillets included,
+which also leaves room for an M8 washer) and the other holes.
 The fillet and ribs must fit inside the legs. These rules define the design domain the
 optimizer will search in Phase 2.
 
@@ -167,7 +175,7 @@ that the plane stress Kt formula ignores.
 - **Local frame.** The bracket is built in its own frame. Placing it on the user's 3D
   mounting points (a rigid transform), and checking the points are compatible with the
   parametric shape, are part of requirement interpretation in Phase 3.
-- **Materials.** Only a `Material` model exists. The example uses typical handbook values
-  for 6061-T6. The material database, S-N data and selection come in Phase 2.
+- **Materials.** All material data are typical handbook values, see
+  [fatigue.md](fatigue.md).
 - **Run time.** About 4 s for the default mesh (29 k nodes) and 35 s for the finest
   convergence level (135 k nodes) on an Apple Silicon Mac.
