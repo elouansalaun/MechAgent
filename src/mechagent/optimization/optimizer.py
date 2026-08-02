@@ -71,6 +71,36 @@ class DesignSpace(BaseModel):
                 )
         return values
 
+    def trial_params(self, values: dict[str, float]) -> dict[str, float | bool]:
+        """Optuna parameters reproducing `values`, to enqueue a known design."""
+        params: dict[str, float | bool] = {}
+        for variable in self.variables:
+            value = values[variable.name]
+            if variable.optional:
+                params[f"{variable.name}_enabled"] = value > 0
+                if value == 0:
+                    continue
+            params[variable.name] = value
+        return params
+
+    def narrowed(self, around: dict[str, float], fraction: float = 0.3) -> DesignSpace:
+        """Bounds shrunk to +/- `fraction` of a known design, inside the current bounds."""
+        variables = []
+        for variable in self.variables:
+            value = around[variable.name]
+            if value == 0 and variable.optional:
+                variables.append(variable)
+                continue
+            low = max(variable.low, value * (1 - fraction))
+            high = min(variable.high, value * (1 + fraction))
+            variables.append(variable.model_copy(update={"low": low, "high": max(high, low)}))
+        return self.model_copy(update={"variables": variables})
+
+    def widened(self, factor: float = 1.5) -> DesignSpace:
+        """Upper bounds multiplied by `factor`, lower bounds unchanged."""
+        variables = [v.model_copy(update={"high": v.high * factor}) for v in self.variables]
+        return self.model_copy(update={"variables": variables})
+
 
 # Hole positions come from the mounting interface, so they stay fixed.
 DEFAULT_BRACKET_SPACE = DesignSpace(
@@ -97,6 +127,7 @@ class TrialRecord(BaseModel):
 
 class MaterialOptimization(BaseModel):
     material: str
+    space: DesignSpace | None = None
     trials: list[TrialRecord]
     valid_designs: list[DesignEvaluation] = []  # sorted by objective, best first
 
@@ -169,7 +200,9 @@ def optimize_material(
     solvers: SolversConfig | None = None,
     min_search_element_size: float = MIN_SEARCH_ELEMENT_SIZE,
     search_margin: float = SEARCH_MARGIN,
+    start_from: list[dict[str, float]] | None = None,
 ) -> MaterialOptimization:
+    """TPE search for one material. `start_from` designs are evaluated first (warm start)."""
     names = constraint_names(requirements)
     records: list[TrialRecord] = []
     evaluations: dict[int, DesignEvaluation] = {}
@@ -234,11 +267,14 @@ def optimize_material(
             seed=seed, n_startup_trials=max(5, n_trials // 3), multivariate=True, group=True
         )
     study = optuna.create_study(direction="minimize", sampler=sampler)
+    for values in start_from or []:
+        study.enqueue_trial(space.trial_params(values))
     study.optimize(objective, n_trials=n_trials)
 
     valid = sorted((r for r in records if r.valid), key=lambda r: r.objective)
     optimization = MaterialOptimization(
         material=material.name,
+        space=space,
         trials=records,
         valid_designs=[evaluations[r.number] for r in valid],
     )
@@ -304,18 +340,17 @@ def verify_final_design(
     return study, final
 
 
-def optimize_bracket_design(
-    requirements: DesignRequirements,
-    work_dir: Path,
-    n_trials: int = 30,
-    max_materials: int = 3,
-    space: DesignSpace = DEFAULT_BRACKET_SPACE,
-    seed: int = 0,
-    materials: dict[str, Material] | None = None,
-    solvers: SolversConfig | None = None,
-    max_verifications: int = 3,
-) -> OptimizationResult:
-    materials = materials or load_materials()
+class VerificationOutcome(BaseModel):
+    chosen_material: str | None = None
+    final: DesignEvaluation | None = None
+    convergence: ConvergenceStudy | None = None
+    valid: bool = False
+    decisions: list[str] = []
+
+
+def select_materials(
+    requirements: DesignRequirements, materials: dict[str, Material]
+) -> tuple[SelectionResult, list[str]]:
     fatigue_settings = requirements.fatigue.settings if requirements.fatigue else None
     selection = rank_materials(
         materials,
@@ -325,57 +360,55 @@ def optimize_bracket_design(
         fatigue_settings=fatigue_settings,
         candidates=requirements.candidate_materials,
     )
-    result = OptimizationResult(requirements=requirements, selection=selection, materials=[])
-    decisions = result.decisions
-    decisions.append(
+    decisions = [
         f"Ranked {len(selection.ranking)} materials on {', '.join(selection.criteria)} "
         f"for minimum {requirements.objective} (score, limiting index): "
         + ", ".join(
             f"{r.name} ({r.score:.2f}, limited by {r.governing})" for r in selection.ranking
         )
+    ]
+    decisions += [f"Rejected {r.name}: {r.reason}." for r in selection.rejected]
+    return selection, decisions
+
+
+def describe_search(optimization: MaterialOptimization, objective: str) -> str:
+    n_trials = len(optimization.trials)
+    if optimization.best is None:
+        return f"{optimization.material}: no valid design in {n_trials} trials."
+    value = optimization.best.objective_value(objective)
+    return (
+        f"{optimization.material}: best valid design {_format(value, objective)} "
+        f"({optimization.n_valid} valid designs out of {n_trials} trials). "
+        + _closest_limit(optimization.best)
     )
-    for rejected in selection.rejected:
-        decisions.append(f"Rejected {rejected.name}: {rejected.reason}.")
 
-    shortlist = selection.ranking[:max_materials]
-    for ranked in shortlist:
-        optimization = optimize_material(
-            requirements,
-            materials[ranked.name],
-            work_dir / ranked.name,
-            n_trials,
-            space,
-            seed,
-            solvers,
-        )
-        result.materials.append(optimization)
-        if optimization.best is None:
-            decisions.append(
-                f"{ranked.name}: no valid design in {n_trials} trials "
-                f"({len(optimization.trials) - optimization.n_valid} invalid)."
-            )
-        else:
-            value = optimization.best.objective_value(requirements.objective)
-            decisions.append(
-                f"{ranked.name}: best valid design {_format(value, requirements.objective)} "
-                f"({optimization.n_valid} valid designs out of {n_trials} trials). "
-                + _closest_limit(optimization.best)
-            )
 
+def choose_and_verify(
+    searches: list[MaterialOptimization],
+    requirements: DesignRequirements,
+    work_dir: Path,
+    materials: dict[str, Material],
+    solvers: SolversConfig | None = None,
+    max_verifications: int = 3,
+) -> VerificationOutcome:
+    """Verify the valid designs of all materials in order of objective, keep the first that
+    passes the mesh convergence study and every check on the finer mesh."""
+    outcome = VerificationOutcome()
+    decisions = outcome.decisions
+    objective = requirements.objective
     candidates = sorted(
-        (design for m in result.materials for design in m.valid_designs),
-        key=lambda design: design.objective_value(requirements.objective),
+        (design for m in searches for design in m.valid_designs),
+        key=lambda design: design.objective_value(objective),
     )
     if not candidates:
         decisions.append(
             "No valid design was found. The design space, the number of trials or the "
             "requirements have to change before another iteration."
         )
-        _save(result, work_dir)
-        return result
+        return outcome
 
     for rank, candidate in enumerate(candidates[:max_verifications], start=1):
-        value = _format(candidate.objective_value(requirements.objective), requirements.objective)
+        value = _format(candidate.objective_value(objective), objective)
         convergence, final = verify_final_design(
             candidate,
             materials[candidate.material],
@@ -389,10 +422,10 @@ def optimize_bracket_design(
         if final.error:
             failed.append(final.error)
         if not failed:
-            result.chosen_material = candidate.material
-            result.final, result.convergence, result.valid = final, convergence, True
-            others = sorted({m.material for m in result.materials if m.best} - {candidate.material})
-            best_word = "lightest" if requirements.objective == "mass" else "cheapest"
+            outcome.chosen_material = candidate.material
+            outcome.final, outcome.convergence, outcome.valid = final, convergence, True
+            others = sorted({m.material for m in searches if m.best} - {candidate.material})
+            best_word = "lightest" if objective == "mass" else "cheapest"
             decision = (
                 f"Chose {candidate.material} ({value}), the {best_word} valid design that "
                 "passed the final verification: mesh convergence and every check on the "
@@ -402,17 +435,61 @@ def optimize_bracket_design(
                 decision += f" Also optimised: {', '.join(others)}."
             decisions.append(decision)
             decisions.append(_closest_limit(final))
-            decisions += _close_alternatives(candidate, result.materials, requirements.objective)
-            break
+            decisions += _close_alternatives(candidate, searches, objective)
+            return outcome
         decisions.append(
             f"Candidate {rank} ({candidate.material}, {value}) failed the final verification: "
             f"{', '.join(failed)}."
         )
-    else:
-        decisions.append(
-            f"None of the {min(len(candidates), max_verifications)} best designs passed the "
-            "final verification. Another iteration is needed."
+
+    decisions.append(
+        f"None of the {min(len(candidates), max_verifications)} best designs passed the "
+        "final verification. Another iteration is needed."
+    )
+    return outcome
+
+
+def optimize_bracket_design(
+    requirements: DesignRequirements,
+    work_dir: Path,
+    n_trials: int = 30,
+    max_materials: int = 3,
+    space: DesignSpace = DEFAULT_BRACKET_SPACE,
+    seed: int = 0,
+    materials: dict[str, Material] | None = None,
+    solvers: SolversConfig | None = None,
+    max_verifications: int = 3,
+) -> OptimizationResult:
+    """Material ranking, one search per shortlisted material, then verification."""
+    materials = materials or load_materials()
+    selection, decisions = select_materials(requirements, materials)
+    result = OptimizationResult(
+        requirements=requirements, selection=selection, materials=[], decisions=decisions
+    )
+
+    for ranked in selection.ranking[:max_materials]:
+        optimization = optimize_material(
+            requirements,
+            materials[ranked.name],
+            work_dir / ranked.name,
+            n_trials,
+            space,
+            seed,
+            solvers,
         )
+        result.materials.append(optimization)
+        result.decisions.append(describe_search(optimization, requirements.objective))
+
+    outcome = choose_and_verify(
+        result.materials, requirements, work_dir, materials, solvers, max_verifications
+    )
+    result.chosen_material = outcome.chosen_material
+    result.final, result.convergence, result.valid = (
+        outcome.final,
+        outcome.convergence,
+        outcome.valid,
+    )
+    result.decisions += outcome.decisions
     _save(result, work_dir)
     return result
 

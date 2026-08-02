@@ -281,3 +281,67 @@ def test_close_alternatives_are_reported_with_their_cost(tmp_path):
 
     assert len(notes) == 1
     assert "Al6061-T6 at 234.0 g (+0.9 %)" in notes[0]
+
+
+SPACE = DesignSpace(
+    variables=[
+        DesignVariable(name="base_thickness", low=3.0, high=14.0),
+        DesignVariable(name="rib_thickness", low=2.0, high=6.0, optional=True),
+    ]
+)
+
+
+def test_narrowed_space_stays_inside_the_original_bounds():
+    narrowed = SPACE.narrowed({"base_thickness": 12.0, "rib_thickness": 5.0}, fraction=0.3)
+
+    base, rib = narrowed.variables
+    assert (base.low, base.high) == pytest.approx((8.4, 14.0))
+    assert (rib.low, rib.high) == pytest.approx((3.5, 6.0))
+    assert rib.optional
+
+
+def test_narrowing_around_a_disabled_feature_keeps_its_range():
+    narrowed = SPACE.narrowed({"base_thickness": 5.0, "rib_thickness": 0.0})
+
+    assert narrowed.variables[1] == SPACE.variables[1]
+
+
+def test_widened_space():
+    widened = SPACE.widened(1.5)
+
+    assert [v.high for v in widened.variables] == [21.0, 9.0]
+    assert [v.low for v in widened.variables] == [3.0, 2.0]
+
+
+def test_trial_params_for_optional_features():
+    assert SPACE.trial_params({"base_thickness": 6.0, "rib_thickness": 0.0}) == {
+        "base_thickness": 6.0,
+        "rib_thickness_enabled": False,
+    }
+    assert SPACE.trial_params({"base_thickness": 6.0, "rib_thickness": 3.0}) == {
+        "base_thickness": 6.0,
+        "rib_thickness_enabled": True,
+        "rib_thickness": 3.0,
+    }
+
+
+def test_warm_start_designs_are_evaluated_first(fake_fe, tmp_path):
+    material = load_materials()["Al6061-T6"]
+    start = {"base_thickness": 6.0, "flange_thickness": 6.5}
+    space = DEFAULT_BRACKET_SPACE.model_copy(
+        update={
+            "variables": [
+                DesignVariable(name="base_thickness", low=3.0, high=14.0),
+                DesignVariable(name="flange_thickness", low=3.0, high=14.0),
+            ]
+        }
+    )
+
+    result = optimize_material(
+        REQUIREMENTS, material, tmp_path, n_trials=3, space=space, start_from=[start]
+    )
+
+    assert result.trials[0].params["base_thickness"] == 6.0
+    assert result.trials[0].params["flange_thickness"] == 6.5
+    assert result.trials[0].valid  # 12.5 mm of walls meets the fake strength rule
+    assert result.space == space
