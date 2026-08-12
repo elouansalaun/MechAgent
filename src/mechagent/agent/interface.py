@@ -67,6 +67,13 @@ def map_bracket_interface(
         return None, issues
 
     bolts = request.mounting_points
+    axes = [("mounting_points", b.axis) for b in bolts] + [("load_point", request.load_point.axis)]
+    if any(np.linalg.norm(axis.array()) < 1e-9 for _, axis in axes):
+        return None, [
+            missing(field, "a hole axis direction is zero, it must be given")
+            for field, axis in axes
+            if np.linalg.norm(axis.array()) < 1e-9
+        ]
     diameters = [b.hole_diameter for b in bolts]
     if None in diameters:
         issues.append(missing("mounting_points", "bolt hole diameters are needed (9 mm for M8)"))

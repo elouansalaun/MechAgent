@@ -2,7 +2,12 @@ import numpy as np
 import pytest
 
 from mechagent.agent.interface import map_bracket_interface
-from mechagent.agent.review import numbers_in_text, review_request, unverified_values
+from mechagent.agent.review import (
+    numbers_in_text,
+    review_request,
+    unverified_values,
+    unverified_vectors,
+)
 from mechagent.cad.bracket import BracketParameters
 from mechagent.core.request import EngineeringRequest, InterfacePoint, Vector
 from mechagent.materials.database import load_materials
@@ -191,3 +196,42 @@ def test_numbers_not_in_the_text_must_be_confirmed():
 
     assert [i.field for i in issues] == ["max_displacement"]
     assert issues[0].blocking
+
+
+EXPLICIT_TEXT = (
+    "Global frame: z points up. Two bolt holes of 9 mm at (0, -18, 200) mm and (0, 18, 200) "
+    "mm, bolt axis (1, 0, 0). Pin hole 12 mm, axis (0, 0, 1), at (60, 0, 150) mm. Maximum "
+    "load (0, 0, -2000) N, cyclic, 1 million cycles, R = 0. Safety factor 2, max deflection "
+    "0.5 mm."
+)
+
+
+def test_explicit_vectors_are_verified():
+    assert unverified_vectors(wall_request(), EXPLICIT_TEXT) == []
+
+
+def test_direction_read_from_words_must_be_confirmed():
+    text = EXPLICIT_TEXT.replace("axis (0, 0, 1)", "vertical axis")
+    wrong = wall_request(load_point=point((60, 0, 150), (0, -1, 0), 12.0))
+
+    issues = unverified_vectors(wrong, text)
+
+    assert [i.field for i in issues] == ["load_point.axis"]
+    assert "(0, -1, 0)" in issues[0].message
+
+
+def test_force_direction_only_needs_the_same_direction():
+    text = EXPLICIT_TEXT.replace("(0, 0, -2000) N", "of 2000 N along (0, 0, -1)")
+
+    assert unverified_vectors(wall_request(), text) == []
+
+
+def test_zero_axis_is_reported_as_missing():
+    request = wall_request(
+        mounting_points=[point((0, -18, 200), (0, 0, 0), 9.0), point((0, 18, 200), (0, 0, 0), 9.0)]
+    )
+
+    interface, issues = map_bracket_interface(request)
+
+    assert interface is None
+    assert all(i.kind == "missing" and i.field == "mounting_points" for i in issues)

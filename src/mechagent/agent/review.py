@@ -2,14 +2,17 @@
 
 Blocking issues stop the agent until the user answers. Non blocking ones are defaults the
 agent takes, each written down as an assumption. When the request was parsed from text by
-the LLM, every number it produced must also appear in the text, otherwise the user has to
-confirm it: an LLM must not be able to slip an invented value into a design.
+the LLM, every number it produced must also appear in the text, and every position, axis
+and force direction must appear as an explicit (x, y, z) triple. Otherwise the user has to
+confirm it: an LLM must not be able to slip an invented value into a design. Directions
+matter most: a 9B model reading "vertical" without thinking often picks the wrong axis.
 """
 
 from __future__ import annotations
 
 import re
 
+import numpy as np
 from pydantic import BaseModel
 
 from mechagent.agent.interface import BracketInterface, map_bracket_interface
@@ -104,6 +107,56 @@ def _request_numbers(request: EngineeringRequest) -> dict[str, float]:
     return numbers
 
 
+_TRIPLE = re.compile(
+    r"\(\s*(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)\s*\)"
+)
+
+
+def triples_in_text(text: str) -> list[np.ndarray]:
+    return [np.array([float(v) for v in m.groups()]) for m in _TRIPLE.finditer(text)]
+
+
+def _request_vectors(request: EngineeringRequest) -> dict[str, tuple[Vector, bool]]:
+    """Vectors of the request, with True when only their direction matters."""
+    vectors: dict[str, tuple[Vector, bool]] = {}
+    points = [(f"mounting_points[{i}]", p) for i, p in enumerate(request.mounting_points)]
+    if request.load_point is not None:
+        points.append(("load_point", request.load_point))
+    for name, point in points:
+        vectors[f"{name}.position"] = (point.position, False)
+        vectors[f"{name}.axis"] = (point.axis, True)
+    if request.force is not None:
+        vectors["force"] = (request.force, True)
+    return vectors
+
+
+def unverified_vectors(request: EngineeringRequest, text: str) -> list[RequirementIssue]:
+    triples = triples_in_text(text)
+    issues = []
+    for name, (vector, direction_only) in _request_vectors(request).items():
+        value = vector.array()
+        if direction_only:
+            norm = np.linalg.norm(value)
+            found = norm > 0 and any(
+                np.linalg.norm(t) > 0 and value @ t / (norm * np.linalg.norm(t)) > 1 - 1e-6
+                for t in triples
+            )
+        else:
+            found = any(np.allclose(value, t, atol=1e-6) for t in triples)
+        if not found:
+            shown = ", ".join(f"{v:g}" for v in value)
+            issues.append(
+                RequirementIssue(
+                    field=name,
+                    kind="unverified",
+                    message=f"{name} was read as ({shown}) but the text gives no such vector, "
+                    "please confirm it or write it as (x, y, z)",
+                    blocking=True,
+                )
+            )
+    return issues
+
+
 def unverified_values(request: EngineeringRequest, text: str) -> list[RequirementIssue]:
     found = numbers_in_text(text)
     issues = []
@@ -147,7 +200,7 @@ def review_request(
 ) -> ReviewResult:
     issues: list[RequirementIssue] = []
     if text is not None:
-        issues += unverified_values(request, text)
+        issues += unverified_values(request, text) + unverified_vectors(request, text)
 
     interface, interface_issues = map_bracket_interface(request)
     issues += interface_issues
