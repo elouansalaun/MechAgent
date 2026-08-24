@@ -1,5 +1,6 @@
 import math
 
+import cadquery as cq
 import pytest
 from pydantic import ValidationError
 
@@ -8,6 +9,7 @@ from mechagent.cad.bracket import (
     build_bracket,
     build_bracket_solid,
 )
+from mechagent.cad.common import GeometryError
 
 
 def expected_volume(p: BracketParameters) -> float:
@@ -105,8 +107,29 @@ def test_no_rib_fillet_group_without_ribs(tmp_path):
         ({"rib_thickness": 5.0, "rib_size": 90.0}, "ribs longer"),
         ({"rib_thickness": 10.0, "bolt_hole_spacing": 36.0}, "side edges or ribs"),
         ({"rib_thickness": 3.0, "rib_size": 20.0, "rib_fillet_radius": 6.0}, "rib fillet"),
+        # Found in an agent run: the toe ended 0.1 mm before the end of a 63.5 mm base.
+        (
+            {
+                "base_length": 63.5,
+                "flange_thickness": 8.2,
+                "rib_thickness": 2.7,
+                "rib_size": 55.2,
+                "width": 70.0,
+            },
+            "ribs longer than the base",
+        ),
     ],
 )
 def test_infeasible_parameters_are_rejected(overrides, message):
     with pytest.raises(ValidationError, match=message):
         BracketParameters(**overrides)
+
+
+def test_opencascade_failures_become_geometry_errors(monkeypatch):
+    def broken_fillet(self, *args, **kwargs):
+        raise RuntimeError("BRep_API: command not done")
+
+    monkeypatch.setattr(cq.Solid, "fillet", broken_fillet)
+
+    with pytest.raises(GeometryError, match="OpenCascade"):
+        build_bracket_solid(BracketParameters(rib_thickness=3.0, width=66.0))

@@ -24,7 +24,7 @@ from pathlib import Path
 import cadquery as cq
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mechagent.cad.common import export_geometry, hole_faces, single_solid
+from mechagent.cad.common import GeometryError, export_geometry, hole_faces, single_solid
 from mechagent.core.geometry import GeometryModel, HoleFeature
 
 # Minimum material left between a hole and any edge, as a fraction of the hole diameter.
@@ -97,9 +97,12 @@ class BracketParameters(BaseModel):
         if self.rib_thickness > 0:
             if 2 * self.rib_thickness > self.width / 2:
                 problems.append("ribs too thick for the bracket width")
-            if self.rib_size > self.base_length - self.flange_thickness:
+            # The toe fillet must still have material under it, at the end of the base and at
+            # the top of the flange.
+            toe = self.rib_size + self.rib_fillet_radius
+            if toe > self.base_length - self.flange_thickness:
                 problems.append("ribs longer than the base")
-            if self.rib_size > self.flange_height - self.base_thickness:
+            if toe > self.flange_height - self.base_thickness:
                 problems.append("ribs taller than the flange")
             if self.rib_size <= self.fillet_radius:
                 problems.append("ribs smaller than the fillet")
@@ -157,6 +160,16 @@ def _rib_concave_edges(solid: cq.Solid, params: BracketParameters) -> list[cq.Ed
 
 
 def build_bracket_solid(params: BracketParameters) -> cq.Solid:
+    """The bracket solid. Any OpenCascade failure is raised as a GeometryError."""
+    try:
+        return _build_solid(params)
+    except GeometryError:
+        raise
+    except Exception as exc:  # OCP raises Standard_Failure and friends, not Python errors
+        raise GeometryError(f"OpenCascade could not build the bracket: {exc}") from exc
+
+
+def _build_solid(params: BracketParameters) -> cq.Solid:
     tb, tf = params.base_thickness, params.flange_thickness
     length, height, width = params.base_length, params.flange_height, params.width
 
