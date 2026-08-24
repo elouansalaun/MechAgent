@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from mechagent.agent.interface import BracketInterface, map_bracket_interface
 from mechagent.agent.issues import RequirementIssue, assumption, inconsistent, missing
-from mechagent.core.request import EngineeringRequest, InterfacePoint, Vector
+from mechagent.core.request import EngineeringRequest, Vector
 from mechagent.core.requirements import DesignRequirements, FatigueRequirement
 from mechagent.materials.material import Material
 from mechagent.optimization.optimizer import DEFAULT_BRACKET_SPACE, DesignSpace
@@ -74,24 +74,14 @@ def numbers_in_text(text: str) -> set[float]:
 
 
 def _request_numbers(request: EngineeringRequest) -> dict[str, float]:
+    """Scalar values of the request. Vectors are checked as whole triples."""
     numbers: dict[str, float] = {}
-
-    def add_vector(name: str, vector: Vector | None) -> None:
-        if vector is not None:
-            for axis in "xyz":
-                numbers[f"{name}.{axis}"] = getattr(vector, axis)
-
-    def add_point(name: str, point: InterfacePoint | None) -> None:
-        if point is not None:
-            add_vector(f"{name}.position", point.position)
-            add_vector(f"{name}.axis", point.axis)
-            if point.hole_diameter is not None:
-                numbers[f"{name}.hole_diameter"] = point.hole_diameter
-
-    for i, point in enumerate(request.mounting_points):
-        add_point(f"mounting_points[{i}]", point)
-    add_point("load_point", request.load_point)
-    add_vector("force", request.force)
+    points = [(f"mounting_points[{i}]", p) for i, p in enumerate(request.mounting_points)]
+    if request.load_point is not None:
+        points.append(("load_point", request.load_point))
+    for name, point in points:
+        if point.hole_diameter is not None:
+            numbers[f"{name}.hole_diameter"] = point.hole_diameter
     for name in (
         "cycles",
         "load_ratio",
@@ -161,9 +151,6 @@ def unverified_values(request: EngineeringRequest, text: str) -> list[Requiremen
     found = numbers_in_text(text)
     issues = []
     for name, value in _request_numbers(request).items():
-        # 0 and 1 come from words (vertical, upward, no ...) and unit vectors.
-        if abs(value) in (0.0, 1.0):
-            continue
         if not any(abs(abs(value) - f) <= 1e-6 * max(1.0, f) for f in found):
             issues.append(
                 RequirementIssue(

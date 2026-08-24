@@ -1,0 +1,3 @@
+Support de fixation. Force verticale de 2 000 N, appliquée cycliquement.
+Durée de vie souhaitée : 1 million de cycles. Déplacement maximal : 0,5 mm.
+Coefficient de sécurité minimal : 2. Objectif : masse minimale.

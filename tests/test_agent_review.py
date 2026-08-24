@@ -235,3 +235,12 @@ def test_zero_axis_is_reported_as_missing():
 
     assert interface is None
     assert all(i.kind == "missing" and i.field == "mounting_points" for i in issues)
+
+
+def test_a_load_ratio_the_text_never_gives_must_be_confirmed():
+    text = "Cyclic load of 2000 N, 1 million cycles, safety factor 2, 9 mm and 12 mm holes, 0.5 mm."
+    request = wall_request()  # load_ratio 0.0, invented by the parser
+
+    issues = unverified_values(request, text)
+
+    assert [i.field for i in issues] == ["load_ratio"]

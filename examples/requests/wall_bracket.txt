@@ -1,0 +1,12 @@
+Shelf bracket on a vertical wall. Global frame: z points up, the wall is the plane x = 0 and
+the bracket is on the x > 0 side.
+
+Mounting: two bolt holes of 9 mm (M8 bolts) at (0, -18, 200) mm and (0, 18, 200) mm, bolt
+axis (1, 0, 0).
+
+Load: a pin goes through a 12 mm hole of axis (0, 0, 1), which meets the bracket at
+(60, 0, 150) mm. The maximum load is (0, 0, -2000) N. It is cyclic, from zero to the
+maximum (load ratio R = 0), for 1 million cycles.
+
+Requirements: maximum deflection 0.5 mm, safety factor 2 on yield. Minimise the mass.
+Aluminium or titanium, CNC machined.
