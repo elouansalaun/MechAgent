@@ -79,6 +79,7 @@ class FieldResults:
     stress: np.ndarray  # (N, 6) MPa, SXX SYY SZZ SXY SYZ SZX
     von_mises: np.ndarray  # (N,) MPa
     evaluated: np.ndarray  # (N,) bool, nodes outside the stress exclusion zone
+    elements: np.ndarray | None = None  # (M, 10) C3D10 connectivity, node ids
 
 
 def make_run_dir(base: Path, name: str) -> Path:
@@ -99,7 +100,7 @@ def remove_bulky_files(run_dir: Path) -> None:
 
 def load_fields(run_dir: Path) -> FieldResults:
     data = np.load(run_dir / "fields.npz")
-    return FieldResults(**{key: data[key] for key in data.files})
+    return FieldResults(**{key: data[key] for key in data.files})  # older runs: no elements
 
 
 def evaluated_nodes(mesh: Mesh, problem: StaticProblem) -> np.ndarray:
@@ -157,6 +158,7 @@ def _read_fields(mesh: Mesh, frd_file: Path, evaluated: np.ndarray) -> FieldResu
         stress=stress,
         von_mises=von_mises(stress),
         evaluated=evaluated,
+        elements=mesh.elements,
     )
 
 

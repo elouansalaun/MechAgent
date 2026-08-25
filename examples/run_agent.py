@@ -17,6 +17,7 @@ from mechagent.agent.llm import LMStudioLLM
 from mechagent.agent.tools import EngineeringTools
 from mechagent.core.config import load_settings
 from mechagent.core.logging import setup_logging
+from mechagent.core.system import keep_awake
 from mechagent.simulation.static import make_run_dir
 
 
@@ -28,6 +29,7 @@ def main() -> None:
     parser.add_argument("--materials", type=int, default=3)
     args = parser.parse_args()
 
+    keep_awake()
     settings = load_settings()
     setup_logging(settings.logging.level, settings.resolve(settings.logging.file))
     run_dir = make_run_dir(settings.resolve(settings.project.work_dir), "agent")

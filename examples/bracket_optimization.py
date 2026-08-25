@@ -13,6 +13,7 @@ import sys
 from mechagent.core.config import load_settings
 from mechagent.core.logging import setup_logging
 from mechagent.core.requirements import DesignRequirements, FatigueRequirement
+from mechagent.core.system import keep_awake
 from mechagent.optimization.optimizer import optimize_bracket_design
 from mechagent.simulation.static import make_run_dir
 
@@ -27,6 +28,7 @@ REQUIREMENTS = DesignRequirements(
 
 def main() -> None:
     n_trials = int(sys.argv[1]) if len(sys.argv) > 1 else 40
+    keep_awake()
     settings = load_settings()
     setup_logging(settings.logging.level, settings.resolve(settings.logging.file))
     run_dir = make_run_dir(settings.resolve(settings.project.work_dir), "bracket_optimization")

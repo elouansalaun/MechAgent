@@ -202,7 +202,8 @@ def evaluate_fatigue(
         # Infinite life everywhere: the critical node is the one closest to the S-N curve.
         equivalent = equivalent_amplitude(stresses.amplitude, stresses.mean, material, method)
         critical = int(np.argmax(equivalent.max(axis=0)))
-    block_damage = stresses.cycles / cycles_to_failure[:, critical]
+    with np.errstate(divide="ignore"):  # zero life means a static failure: infinite damage
+        block_damage = stresses.cycles / cycles_to_failure[:, critical]
     if block_damage.max() > 0:
         worst_block = int(np.argmax(block_damage))
     else:
