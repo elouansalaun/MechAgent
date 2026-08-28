@@ -45,6 +45,8 @@ log_level = "INFO"
 filterwarnings = [
     # ezdxf, pulled in by CadQuery, still uses the old pyparsing names
     "ignore::DeprecationWarning:ezdxf.*",
+    # VTK, behind PyVista, still sets array shapes the way NumPy 2.5 deprecates
+    "ignore::DeprecationWarning:vtkmodules.*",
 ]
 
 [tool.ruff]
