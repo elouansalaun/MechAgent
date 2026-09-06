@@ -253,3 +253,42 @@ def test_text_without_llm_is_an_error(tmp_path, missing):
     )
 
     assert state["status"] == "error"
+
+
+def test_a_verified_run_leaves_its_files(tmp_path):
+    from mechagent.agent.summary import load_summary
+
+    run_agent(tmp_path, FakeTools(), request=wall_request(), config=CONFIG)
+
+    summary = load_summary(tmp_path)
+    assert summary.status == "verified"
+    assert summary.best.final.material == "Al6061-T6"
+    assert [s.iteration for s in summary.searches] == [1, 1, 1, 2, 2]
+    assert summary.deliverables["step"] == "design.step"
+    assert summary.deliverables["pdf"] == "report.pdf"
+    for name in ("design.step", "report.pdf", "report.md", "progress.json"):
+        assert (tmp_path / name).exists()
+    assert (tmp_path / "report.pdf").read_bytes()[:5] == b"%PDF-"
+    assert "`design.step`" in (tmp_path / "report.md").read_text()
+
+
+def test_a_blocked_run_has_a_report_but_no_design_files(tmp_path):
+    from mechagent.agent.summary import load_summary
+
+    run_agent(tmp_path, FakeTools(), request=wall_request(load_point=None), config=CONFIG)
+
+    summary = load_summary(tmp_path)
+    assert summary.status == "needs_input"
+    assert "step" not in summary.deliverables
+    assert not (tmp_path / "design.step").exists()
+    assert (tmp_path / "report.pdf").exists()
+
+
+def test_progress_follows_the_run(tmp_path):
+    import json
+
+    run_agent(tmp_path, FakeTools(), request=wall_request(), config=CONFIG)
+
+    progress = json.loads((tmp_path / "progress.json").read_text())
+    assert progress["status"] == "verified"
+    assert progress["trace"][-1]["step"].startswith("decide")

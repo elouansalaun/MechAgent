@@ -86,6 +86,7 @@ class AgentState(TypedDict, total=False):
     status: Status
     status_reason: str
     trace: Annotated[list[TraceEntry], operator.add]
+    deliverables: dict[str, str]
     report: str
 
 
@@ -370,14 +371,38 @@ def build_agent(
         return update
 
     def report(state: AgentState) -> AgentState:
+        from mechagent.agent.summary import SUMMARY_FILE, summarise
+        from mechagent.reporting.deliverables import write_deliverables
         from mechagent.reporting.markdown import render_report
+        from mechagent.reporting.pdf import markdown_to_pdf
 
         status, reason = final_status(state)
         final = {**state, "status": status, "status_reason": reason}
-        text = render_report(final)
         work_dir.mkdir(parents=True, exist_ok=True)
+        files, notes = write_deliverables(final, work_dir)
+        trace = [
+            TraceEntry(step="report", decision=f"deliverable not produced: {note}", source="tool")
+            for note in notes
+        ]
+        final = {**final, "deliverables": files, "trace": state.get("trace", []) + trace}
+
+        text = render_report(final)
         (work_dir / "report.md").write_text(text)
-        return {"status": status, "status_reason": reason, "report": text}
+        try:
+            markdown_to_pdf(text, work_dir / "report.pdf")
+            files["pdf"] = "report.pdf"
+        except Exception as exc:
+            trace.append(TraceEntry(step="report", decision=f"PDF failed: {exc}", source="tool"))
+        files["report"] = "report.md"
+        final = {**final, "deliverables": files, "trace": state.get("trace", []) + trace}
+        (work_dir / SUMMARY_FILE).write_text(summarise(final).model_dump_json(indent=1))
+        return {
+            "status": status,
+            "status_reason": reason,
+            "deliverables": files,
+            "report": text,
+            "trace": trace,
+        }
 
     def stop_if_blocked(state: AgentState) -> str:
         return "report" if state.get("status", "running") != "running" else "next"
@@ -451,6 +476,12 @@ def run_agent(
     request: EngineeringRequest | None = None,
     config: AgentConfig | None = None,
 ) -> AgentState:
+    from mechagent.agent.summary import write_progress
+
     agent = build_agent(llm, tools, work_dir, config)
     state: AgentState = {"text": text, "request": request, "status": "running", "trace": []}
-    return agent.invoke(state, {"recursion_limit": 100})
+    # Streaming the full state after each node lets other processes follow the run.
+    for update in agent.stream(state, {"recursion_limit": 100}, stream_mode="values"):
+        state = update
+        write_progress(state, work_dir)
+    return state

@@ -273,6 +273,26 @@ def _final_section(state) -> list[str]:
     )
 
 
+FIGURE_CAPTIONS = {
+    "mesh": "Final mesh (bracket frame)",
+    "von_mises": "von Mises stress on the deformed shape (bracket frame)",
+    "displacement": "Displacement on the deformed shape (bracket frame)",
+}
+
+
+def _files_section(state) -> list[str]:
+    files = state.get("deliverables") or {}
+    figures = [name for name in FIGURE_CAPTIONS if name in files]
+    if not figures and "step" not in files:
+        return []
+    lines = ["### Figures and files", ""]
+    if "step" in files:
+        lines += [f"- CAD model in the global frame of the request: `{files['step']}`", ""]
+    for name in figures:
+        lines += [f"![{FIGURE_CAPTIONS[name]}]({files[name]})", ""]
+    return lines
+
+
 def _holes(params):
     from mechagent.cad.bracket import bracket_holes
 
@@ -328,6 +348,7 @@ def render_report(state) -> str:
         _materials_section,
         _iterations_section,
         _final_section,
+        _files_section,
         _assumptions_section,
         _trace_section,
     ):
