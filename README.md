@@ -6,10 +6,35 @@ design targets. From those it generates a parametric part, simulates it, optimiz
 writes an engineering report.
 
 The idea behind the project: **the LLM orchestrates, deterministic tools compute.**
-The language model (local, served by LM Studio) interprets requirements, chooses which analyses
-to run and decides whether to iterate. Every stress, displacement, mass or fatigue life is
-computed by CadQuery, Gmsh, CalculiX, NumPy/SciPy or Optuna, never by the LLM. A design is
-only declared valid once every required verification has run and passed.
+The language model (local, served by LM Studio) reads the specification and chooses the next
+step among the actions engineering rules allow. Every stress, displacement, mass or fatigue
+life is computed by CadQuery, Gmsh, CalculiX, NumPy/SciPy or Optuna, never by the LLM. Every
+number and direction the LLM reads is checked against the original text. A design is only
+declared valid once every required verification has run and passed, and every decision is
+written to a trace with its source (rule, LLM, tool or user).
+
+## Quick start
+
+```bash
+conda env create -f environment.yml
+```
+
+```bash
+conda activate mechagent
+```
+
+```bash
+mechagent-check-env
+```
+
+```bash
+mechagent-app
+```
+
+In the app, pick the `wall_bracket` example, click **Review**, then **Start the design**.
+The run continues in the background. The **Runs** tab follows it, then shows the verified
+design with its checks and figures, and offers the PDF report and the STEP model for
+download.
 
 The first supported component is a mechanical mounting bracket, optimized with parametric
 (not topology) optimization.
@@ -39,16 +64,17 @@ The first supported component is a mechanical mounting bracket, optimized with p
 | `mechagent.simulation`     | Gmsh, CalculiX static FEM, rainflow, S-N fatigue, validation | Done     |
 | `mechagent.materials`      | Material database, S-N curves, ranking, cost model           | Done     |
 | `mechagent.optimization`   | Design evaluation and parametric optimization with Optuna    | Done     |
-| `mechagent.agent`          | LangGraph orchestration of the engineering workflow          | Phase 3  |
-| `mechagent.reporting`      | Engineering report and 3D visualizations                     | Phase 4  |
-| `mechagent.app`            | Streamlit user interface                                     | Phase 4  |
+| `mechagent.agent`          | LangGraph agent: review, planning, iterations, decision trace | Done    |
+| `mechagent.reporting`      | Markdown and PDF report, PyVista figures, STEP deliverable   | Done     |
+| `mechagent.app`            | Streamlit interface, background runs                         | Done     |
 
 Other folders:
 
 - `config/` holds the YAML configuration (`default.yaml`).
 - `data/` holds the material database (`materials.yaml`, typical handbook values).
 - `docs/` holds the implementation notes: [simulation](docs/simulation.md),
-  [materials and fatigue](docs/fatigue.md), [optimization](docs/optimization.md).
+  [materials and fatigue](docs/fatigue.md), [optimization](docs/optimization.md),
+  [agent](docs/agent.md), [interface and reports](docs/interface_and_reports.md).
 - `examples/` holds runnable examples.
 - `tests/` holds the pytest suite, including smoke tests on the real solvers.
 - `runs/` and `logs/` are created at runtime and ignored by git.
@@ -133,8 +159,14 @@ from mechagent.materials.material import Material
 from mechagent.simulation.bracket import bracket_static_problem
 from mechagent.simulation.static import run_static_analysis
 
-material = Material(name="Al6061-T6", youngs_modulus=68900, poisson_ratio=0.33,
-                    density=2.70e-9, yield_strength=276, ultimate_strength=310)
+material = Material(
+    name="Al6061-T6",
+    youngs_modulus=68900,
+    poisson_ratio=0.33,
+    density=2.70e-9,
+    yield_strength=276,
+    ultimate_strength=310,
+)
 params = BracketParameters(base_thickness=10, rib_thickness=3)
 geometry = build_bracket(params, Path("runs/my_bracket"))
 problem = bracket_static_problem(geometry, params, material, force=(0, 0, -2000))
@@ -165,6 +197,35 @@ fatigue method (S-N, Marin factors, mean stress correction, Miner, rainflow) is 
 in [docs/fatigue.md](docs/fatigue.md), and the optimization in
 [docs/optimization.md](docs/optimization.md).
 
+## The engineering agent
+
+```bash
+python examples/run_agent.py examples/requests/wall_bracket.txt
+```
+
+```bash
+python examples/run_agent.py examples/requests/vague_request.txt
+```
+
+The agent runs these steps:
+
+1. reads the text with the LLM and checks every value it extracted against the text
+2. places the bracket on the given mounting points
+3. asks for what is missing or inconsistent
+4. decides the analyses (static, fatigue, buckling screening; modal is unavailable, so the
+   design would be marked unverifiable)
+5. validates the solver chain against analytical cases
+6. ranks and shortlists materials
+7. optimizes, verifies, and decides to refine, widen, accept or stop
+
+The wall bracket finishes **verified** at 239 g of Al7075-T6 after one refinement chosen
+by the LLM (about 70 minutes). The vague request stops with questions within seconds.
+See [docs/agent.md](docs/agent.md).
+
+Each run leaves `report.md`, `report.pdf`, `summary.json`, the figures and, for a verified
+design, `design.step` in the global frame of the request. See
+[docs/interface_and_reports.md](docs/interface_and_reports.md).
+
 ## Tests
 
 ```bash
@@ -173,7 +234,8 @@ pytest
 
 Tests marked `external` run the real tools: CalculiX analyses of the bracket, the
 analytical validation cases (static and fatigue), a convergence study, design evaluations,
-a short real optimization and an LM Studio prompt. When a tool is
+a short real optimization and the LM Studio model (extraction and decision). The agent graph
+and the Streamlit app are tested with fake tools and a fake LLM. When a tool is
 missing these tests are skipped with a visible reason rather than passing. To run only the
 fast unit tests:
 
@@ -189,5 +251,9 @@ pytest -m "not external"
 - **Phase 2**: material database, S-N fatigue with mean stress correction and Miner damage,
   rainflow counting, cost model, Optuna parametric optimization (done).
 - **Phase 3**: LangGraph agent: requirement interpretation, missing-data detection, analysis
-  selection, iteration decisions and a decision trace.
-- **Phase 4**: Streamlit interface, PyVista visualizations and the engineering report.
+  selection, iteration decisions and a decision trace (done).
+- **Phase 4**: Streamlit interface, PyVista visualizations, PDF report and STEP export
+  (done).
+
+Next steps worth doing: a contact-based bolted joint model, buckling and modal FEM, more
+component types, and a Pareto front of mass against cost.
