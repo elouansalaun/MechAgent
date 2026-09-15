@@ -32,6 +32,7 @@ dev = [
 
 [project.scripts]
 mechagent-check-env = "mechagent.core.environment:main"
+mechagent-app = "mechagent.app.launch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
