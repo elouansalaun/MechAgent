@@ -13,6 +13,12 @@ number and direction the LLM reads is checked against the original text. A desig
 declared valid once every required verification has run and passed, and every decision is
 written to a trace with its source (rule, LLM, tool or user).
 
+![MechAgent in 50 seconds](docs/media/mechagent_explainer_en.gif)
+
+Version française : [docs/media/mechagent_explainer_fr.gif](docs/media/mechagent_explainer_fr.gif).
+The animation is drawn from a real agent run (its trials and report) by
+`scripts/make_explainer_gif.py`.
+
 ## Quick start
 
 ```bash
