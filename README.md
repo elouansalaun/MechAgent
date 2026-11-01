@@ -1,265 +1,238 @@
 # MechAgent
 
-MechAgent is an autonomous mechanical design and optimization agent. It takes engineering
-requirements as input: mounting points, loads, boundary conditions, material constraints and
-design targets. From those it generates a parametric part, simulates it, optimizes it and
-writes an engineering report.
+**An AI engineering agent that turns a plain-text specification into a verified mechanical
+part, with its simulation, its optimization, a PDF engineering report and a STEP CAD file.**
 
-The idea behind the project: **the LLM orchestrates, deterministic tools compute.**
-The language model (local, served by LM Studio) reads the specification and chooses the next
-step among the actions engineering rules allow. Every stress, displacement, mass or fatigue
-life is computed by CadQuery, Gmsh, CalculiX, NumPy/SciPy or Optuna, never by the LLM. Every
-number and direction the LLM reads is checked against the original text. A design is only
-declared valid once every required verification has run and passed, and every decision is
-written to a trace with its source (rule, LLM, tool or user).
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C)
+![CalculiX](https://img.shields.io/badge/CalculiX-FEM-orange)
+![CadQuery](https://img.shields.io/badge/CadQuery-CAD-blue)
+![Optuna](https://img.shields.io/badge/Optuna-optimization-6A5ACD)
+![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-186-success)
+
+> **The LLM orchestrates, deterministic tools compute.** The language model reads the
+> request and picks the next step among the actions engineering rules allow. Every stress,
+> displacement, mass and fatigue life comes from a real solver, never from the LLM.
 
 ![MechAgent in 50 seconds](docs/media/mechagent_explainer_en.gif)
 
-Version française : [docs/media/mechagent_explainer_fr.gif](docs/media/mechagent_explainer_fr.gif).
-The animation is drawn from a real agent run (its trials and report) by
-`scripts/make_explainer_gif.py`.
 
-## Quick start
+## Overview
 
-```bash
-conda env create -f environment.yml
+| You give it                                                   | It gives you back                                                    |
+| ------------------------------------------------------------- | -------------------------------------------------------------------- |
+| A short text: mounting points, load, deflection limit, safety factor, material family | A bracket designed, meshed, simulated with finite elements, optimized for minimum mass and checked |
+|                                                               | A [PDF engineering report](docs/media/example_report.pdf) with every check, assumption and decision |
+|                                                               | A [STEP model](docs/media/example_design.step) placed in your global frame, ready for CAD |
+
+Result of the run shown below (titanium shelf bracket, 2000 N static load), about 20 minutes
+on a laptop:
+
+| Mass      | Max displacement         | Yield safety factor     | Checks passed | Status       |
+| --------- | ------------------------ | ----------------------- | ------------- | ------------ |
+| 960.5 g   | 1.86 mm (limit 2 mm)     | 7.34 (required 2)       | 10 / 10       | **VERIFIED** |
+
+A second example, an aluminium wall bracket under a cyclic load of one million cycles,
+ends verified at 239 g of Al7075-T6, 19 % lighter than the first iteration after the LLM
+chose to refine the search.
+
+## Agentic workflow
+
+The agent is a [LangGraph](https://github.com/langchain-ai/langgraph) state graph. The LLM
+appears at only two points: reading the request and choosing between actions the rules
+already allow. Everything else is engineering rules and deterministic tools, and every node
+writes its decision to the trace with its source.
+
+```mermaid
+flowchart TD
+    IN(["Plain-text specification"]) --> parse
+
+    parse["parse<br/>LLM extracts loads, points and limits,<br/>every value is checked against the text"]:::llm
+    review["review<br/>places the bracket on the mounting points,<br/>lists missing or inconsistent data"]:::rule
+    plan["plan<br/>static, fatigue, buckling, modal:<br/>required or not, and why"]:::rule
+    validate["validate_solver<br/>the FEM chain must reproduce<br/>6 analytical reference cases"]:::tool
+    select["select_materials<br/>Ashby index ranking, shortlist"]:::tool
+    search["search<br/>Optuna optimization,<br/>one full FEM evaluation per trial"]:::tool
+    verify["verify<br/>best designs re-checked on a finer mesh,<br/>mesh convergence study"]:::tool
+    decide{"decide<br/>rules list the allowed actions,<br/>the LLM picks one"}:::llm
+    report["report<br/>PDF, Markdown, STEP, summary"]:::tool
+    OUT(["Status + deliverables"])
+
+    parse --> review --> plan --> validate --> select --> search --> verify --> decide
+    decide -- "refine / widen_search" --> search
+    decide -- "accept / stop" --> report
+    parse -. "text unreadable: error" .-> report
+    review -. "blocking question: needs_input" .-> report
+    plan -. "analysis not implemented: unverifiable" .-> report
+    validate -. "a case fails: solver_not_validated" .-> report
+    report --> OUT
+
+    classDef llm fill:#e9d5ff,stroke:#7c3aed,color:#1e1b4b
+    classDef tool fill:#dbeafe,stroke:#2563eb,color:#0c1a3a
+    classDef rule fill:#fef3c7,stroke:#d97706,color:#3b2600
 ```
 
-```bash
-conda activate mechagent
+🟪 LLM &nbsp; 🟦 deterministic tool &nbsp; 🟨 engineering rule &nbsp; · &nbsp; dotted arrows
+stop the run early with an explicit status instead of producing an unchecked design.
+
+### How a decision is made
+
+The LLM never chooses freely. After each verification, the rules compute which actions are
+allowed; the LLM only arbitrates when there is more than one, and an answer outside the
+list falls back to the rule default.
+
+```mermaid
+flowchart LR
+    S["verification results<br/>+ remaining budget"] --> R["engineering rules<br/>list the allowed actions"]:::rule
+    R --> N{"how many?"}
+    N -- "one" --> A["apply it<br/>traced as [rule]"]:::rule
+    N -- "several" --> L["LLM chooses one<br/>and explains why"]:::llm
+    L --> C{"in the<br/>allowed list?"}
+    C -- "yes" --> B["apply it<br/>traced as [llm]"]:::llm
+    C -- "no, or LLM error" --> D["rule default<br/>traced as [rule]"]:::rule
+
+    classDef llm fill:#e9d5ff,stroke:#7c3aed,color:#1e1b4b
+    classDef rule fill:#fef3c7,stroke:#d97706,color:#3b2600
 ```
 
-```bash
-mechagent-check-env
+| Situation after verification                                              | Allowed actions        |
+| ------------------------------------------------------------------------- | ---------------------- |
+| Valid design, a requirement within 10 % of its limit, or no iteration left | `accept`               |
+| Valid design with margin left on every requirement                        | `refine`, `accept`     |
+| Valid designs found, none passed the final verification                   | `refine`, `stop`       |
+| No valid design found                                                     | `widen_search`, `stop` |
+| No valid design and no iteration left                                     | `stop`                 |
+
+In the titanium run, the LLM chose `refine` after iteration 1 (14 % margin on displacement,
+1004.7 g). After iteration 2 (7 % margin, 960.5 g) the rules allowed only `accept`.
+
+### What one optimization trial runs
+
+```mermaid
+flowchart LR
+    O["Optuna TPE sampler<br/>proposes thicknesses, width,<br/>ribs, fillets"] --> C["CadQuery<br/>parametric bracket"]
+    C --> M["Gmsh<br/>quadratic tetra mesh"]
+    M --> F["CalculiX<br/>linear static FEM"]
+    F --> P["post-processing<br/>yield, displacement,<br/>fatigue S-N + Miner, buckling"]
+    P --> K["checks<br/>solver, mesh, equilibrium,<br/>linearity, requirements"]
+    K -- "mass, cost, valid or not" --> O
+
+    classDef tool fill:#dbeafe,stroke:#2563eb,color:#0c1a3a
+    class O,C,M,F,P,K tool
 ```
 
-```bash
-mechagent-app
-```
+## How it works
 
-In the app, pick the `wall_bracket` example, click **Review**, then **Start the design**.
-The run continues in the background. The **Runs** tab follows it, then shows the verified
-design with its checks and figures, and offers the PDF report and the STEP model for
-download.
+### 1. Describe the part in plain text
 
-The first supported component is a mechanical mounting bracket, optimized with parametric
-(not topology) optimization.
+The LLM extracts the request, then every number and vector it read is checked against the
+original text. The agent places the bracket on the mounting points and decides which
+analyses are needed (static, fatigue, buckling, modal), each with its reason.
+
+![Specification, interpretation and analysis plan](docs/media/Streamlit_dashboard_prompt_example.png)
+
+<details>
+<summary>Empty home screen, with the solver and LLM status and the search budget</summary>
+
+![Home screen](docs/media/Streamlit_dashboard_home.png)
+
+</details>
+
+### 2. The agent designs, simulates and iterates
+
+The run continues in the background. The agent validates the solver against analytical
+cases, ranks materials, optimizes the geometry with Optuna and decides whether to refine,
+widen, accept or stop. Every decision is logged with its source: `[rule]`, `[llm]` or
+`[tool]`.
+
+![Decision trace](docs/media/Streamlit_dashboard_result_decision_trace.png)
+
+### 3. A verified design, with its evidence
+
+A design is only declared **verified** once every required check has run and passed,
+including a mesh convergence study on a finer mesh.
+
+![Verified result](docs/media/Streamlit_dashboard_result_verified1.png)
+
+![Checks, final geometry and optimization history](docs/media/Streamlit_dashboard_result_verified2.png)
+
+| Von Mises stress (MPa)                            | Displacement (mm)                                     |
+| ------------------------------------------------- | ----------------------------------------------------- |
+| ![Von Mises stress](docs/media/result_von_mises.png) | ![Displacement](docs/media/result_displacement.png) |
+
+### 4. Deliverables
+
+<a href="docs/media/example_report.pdf"><img src="docs/media/example_report_page1.png" alt="First page of the PDF report" width="360" align="right"></a>
+
+Each run produces:
+
+- **[report.pdf](docs/media/example_report.pdf)**: the request, its review, the bracket
+  placement, the analysis plan, the solver validation, the material ranking, every
+  optimization iteration, every check with its limit, the figures, the assumptions and the
+  full decision trace
+- **[design.step](docs/media/example_design.step)**: the final geometry in the global
+  frame of the request, ready to open in any CAD tool
+- `report.md` and `summary.json`, for reading or for other tools
+
+Click the page on the right to open the full example report.
+
+<br clear="right">
+
+## Area of work
+
+| Area                              | What is in the project                                                                                       | Tools                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| **Finite element analysis**       | Linear static FEM with quadratic tetrahedra, mesh quality and equilibrium checks, mesh convergence, validation against 6 analytical cases | CalculiX, Gmsh                      |
+| **Fatigue and strength**          | S-N curves, Marin factors, Goodman / Gerber / Soderberg mean stress correction, rainflow counting, Miner damage, buckling screening | NumPy, SciPy                        |
+| **Parametric CAD**                | Parametric L bracket with ribs and fillets, placement on arbitrary mounting points by frame transforms, STEP export | CadQuery (OpenCascade)              |
+| **Optimization and materials**    | Mass minimization under constraints, warm-started refinement, material ranking with Ashby indices, cost model | Optuna                              |
+| **AI agents and LLMs**            | Agent as a state graph, local LLM, decisions restricted to rule-allowed actions, every extracted value checked against the source text, decision trace | LangGraph, LangChain, LM Studio (Qwen) |
+| **Software engineering**          | Typed data models, validated configuration, single unit system enforced, 186 tests (unit tests with a fake LLM and smoke tests on the real solvers), linting, packaging | Pydantic, pytest, ruff, conda       |
+| **Visualization and reporting**   | 3D result figures, PDF report generation, web interface with background runs                                 | PyVista, ReportLab, Streamlit       |
 
 ## Architecture
 
 ```
                  ┌──────────────────────────────────────────┐
-  requirements → │ agent/ LangGraph workflow (LM Studio LLM)│ → report
+  requirements → │ agent/ LangGraph workflow (local LLM)    │ → report, STEP
                  └──────┬──────────┬──────────┬─────────────┘
                         │ calls deterministic tools
         ┌───────────────┼──────────┼──────────┼──────────────────┐
         ▼               ▼          ▼          ▼                  ▼
       cad/        simulation/  materials/  optimization/     reporting/
-   CadQuery      Gmsh mesh,    material    Optuna parametric  report, PyVista
-   bracket       CalculiX FEM, database,   search             figures
+   CadQuery      Gmsh mesh,    material    Optuna parametric  PDF report,
+   bracket       CalculiX FEM, database,   search             PyVista figures
                  fatigue       selection
                         ▲
                  core/  config, logging, units, environment checks, shared data models
                  app/   Streamlit interface on top of the agent
 ```
 
-| Package                    | Role                                                         | Status   |
-| -------------------------- | ------------------------------------------------------------ | -------- |
-| `mechagent.core`           | Configuration, logging, units, geometry interface, checks    | Done     |
-| `mechagent.cad`            | Parametric bracket and reference geometries with CadQuery    | Done     |
-| `mechagent.simulation`     | Gmsh, CalculiX static FEM, rainflow, S-N fatigue, validation | Done     |
-| `mechagent.materials`      | Material database, S-N curves, ranking, cost model           | Done     |
-| `mechagent.optimization`   | Design evaluation and parametric optimization with Optuna    | Done     |
-| `mechagent.agent`          | LangGraph agent: review, planning, iterations, decision trace | Done    |
-| `mechagent.reporting`      | Markdown and PDF report, PyVista figures, STEP deliverable   | Done     |
-| `mechagent.app`            | Streamlit interface, background runs                         | Done     |
 
-Other folders:
-
-- `config/` holds the YAML configuration (`default.yaml`).
-- `data/` holds the material database (`materials.yaml`, typical handbook values).
-- `docs/` holds the implementation notes: [simulation](docs/simulation.md),
-  [materials and fatigue](docs/fatigue.md), [optimization](docs/optimization.md),
-  [agent](docs/agent.md), [interface and reports](docs/interface_and_reports.md).
-- `examples/` holds runnable examples.
-- `tests/` holds the pytest suite, including smoke tests on the real solvers.
-- `runs/` and `logs/` are created at runtime and ignored by git.
-
-## Units
-
-Everything runs in one consistent unit system, the one CalculiX users usually pick:
-
-| Quantity | Unit                   |
-| -------- | ---------------------- |
-| Length   | mm                     |
-| Force    | N                      |
-| Stress   | MPa                    |
-| Mass     | tonne (ρ in tonne/mm³) |
-| Time     | s                      |
-
-The configuration rejects any other unit system, so mixed units cannot slip in silently.
-
-## Installation
-
-CalculiX and the OpenCascade kernel behind CadQuery are installed from conda-forge. The
-Python dependencies are then installed from `pyproject.toml` in editable mode:
+## Quick start
 
 ```bash
 conda env create -f environment.yml
-```
-
-```bash
 conda activate mechagent
+mechagent-check-env   # lists every package, program and service needed
+mechagent-app         # opens the Streamlit interface
 ```
 
-The agent also needs a local LLM. We use [LM Studio](https://lmstudio.ai) and its
-OpenAI compatible server, which LangChain talks to through `langchain-openai`. Load the
-model set in `config/default.yaml` (by default `qwen/qwen3.5-9b`) and start the server on
-port 1234, either from the LM Studio Developer tab or from its CLI:
+The agent needs a local LLM served by [LM Studio](https://lmstudio.ai) on port 1234
+(default model `qwen/qwen3.5-9b`):
 
 ```bash
 lms load qwen/qwen3.5-9b
-```
-
-```bash
 lms server start
 ```
 
-## Checking the environment
+In the app, pick the `wall_bracket` example, click **Review**, then **Start the design**.
 
-```bash
-mechagent-check-env
-```
 
-The command lists every Python package, external program and service MechAgent needs. It
-exits with code 1 if anything is missing. A program only counts as available if it actually
-runs and reports a version.
+## Limitations and next steps
 
-## Configuration
-
-Settings come from `config/default.yaml`. To use another file, set `MECHAGENT_CONFIG`:
-
-```bash
-MECHAGENT_CONFIG=my_config.yaml mechagent-check-env
-```
-
-The file is validated with Pydantic, so unknown keys (typos) and unsupported units are errors.
-
-## Static analysis of the bracket
-
-```bash
-python examples/bracket_static.py
-```
-
-The example validates the solver chain on the analytical reference cases, then runs a mesh
-convergence study on the default aluminium bracket under a 2000 N pin load and prints every
-result, check and assumption. Each run gets its own folder under `runs/` with the BREP,
-CalculiX deck and outputs, `problem.json`, `result.json` and the nodal fields (`fields.npz`).
-
-From Python:
-
-```python
-from pathlib import Path
-from mechagent.cad.bracket import BracketParameters, build_bracket
-from mechagent.materials.material import Material
-from mechagent.simulation.bracket import bracket_static_problem
-from mechagent.simulation.static import run_static_analysis
-
-material = Material(
-    name="Al6061-T6",
-    youngs_modulus=68900,
-    poisson_ratio=0.33,
-    density=2.70e-9,
-    yield_strength=276,
-    ultimate_strength=310,
-)
-params = BracketParameters(base_thickness=10, rib_thickness=3)
-geometry = build_bracket(params, Path("runs/my_bracket"))
-problem = bracket_static_problem(geometry, params, material, force=(0, 0, -2000))
-result = run_static_analysis(problem, Path("runs/my_bracket/static"))
-print(result.design_von_mises, result.max_displacement, result.verified)
-```
-
-How the chain works, which checks it runs and what its limits are is described in
-[docs/simulation.md](docs/simulation.md).
-
-## Optimizing the bracket
-
-```bash
-python examples/bracket_optimization.py 40
-```
-
-This optimizes a bracket for minimum mass under a 2000 N cyclic pin load: 1e6 cycles, max
-displacement 0.5 mm, static safety factor 2. The script:
-
-1. ranks the six materials of `data/materials.yaml`
-2. optimizes the geometry of the three best ones with Optuna
-3. picks the lightest valid design
-4. verifies it again on a finer mesh
-
-It prints the decision trace, the final design, every check and every assumption. It takes
-about 15 minutes with 40 trials per material and 30 minutes with 80. The
-fatigue method (S-N, Marin factors, mean stress correction, Miner, rainflow) is described
-in [docs/fatigue.md](docs/fatigue.md), and the optimization in
-[docs/optimization.md](docs/optimization.md).
-
-## The engineering agent
-
-```bash
-python examples/run_agent.py examples/requests/wall_bracket.txt
-```
-
-```bash
-python examples/run_agent.py examples/requests/vague_request.txt
-```
-
-The agent runs these steps:
-
-1. reads the text with the LLM and checks every value it extracted against the text
-2. places the bracket on the given mounting points
-3. asks for what is missing or inconsistent
-4. decides the analyses (static, fatigue, buckling screening; modal is unavailable, so the
-   design would be marked unverifiable)
-5. validates the solver chain against analytical cases
-6. ranks and shortlists materials
-7. optimizes, verifies, and decides to refine, widen, accept or stop
-
-The wall bracket finishes **verified** at 239 g of Al7075-T6 after one refinement chosen
-by the LLM (about 70 minutes). The vague request stops with questions within seconds.
-See [docs/agent.md](docs/agent.md).
-
-Each run leaves `report.md`, `report.pdf`, `summary.json`, the figures and, for a verified
-design, `design.step` in the global frame of the request. See
-[docs/interface_and_reports.md](docs/interface_and_reports.md).
-
-## Tests
-
-```bash
-pytest
-```
-
-Tests marked `external` run the real tools: CalculiX analyses of the bracket, the
-analytical validation cases (static and fatigue), a convergence study, design evaluations,
-a short real optimization and the LM Studio model (extraction and decision). The agent graph
-and the Streamlit app are tested with fake tools and a fake LLM. When a tool is
-missing these tests are skipped with a visible reason rather than passing. To run only the
-fast unit tests:
-
-```bash
-pytest -m "not external"
-```
-
-## Roadmap
-
-- **Phase 0**: environment, project structure, configuration, logging, tests (done).
-- **Phase 1**: parametric bracket CAD, Gmsh meshing, CalculiX static analysis, result
-  parsing, mesh convergence and analytical validation cases (done).
-- **Phase 2**: material database, S-N fatigue with mean stress correction and Miner damage,
-  rainflow counting, cost model, Optuna parametric optimization (done).
-- **Phase 3**: LangGraph agent: requirement interpretation, missing-data detection, analysis
-  selection, iteration decisions and a decision trace (done).
-- **Phase 4**: Streamlit interface, PyVista visualizations, PDF report and STEP export
-  (done).
-
-Next steps worth doing: a contact-based bolted joint model, buckling and modal FEM, more
-component types, and a Pareto front of mass against cost.
+The first supported component is a two-bolt L bracket, optimized parametrically (not by
+topology optimization). Modal analysis is not implemented yet, so a request that needs it
+is marked unverifiable rather than passed. Next steps: a contact-based bolted joint model,
+buckling and modal FEM, more component types, and a Pareto front of mass against cost.
