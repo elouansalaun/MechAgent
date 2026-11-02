@@ -19,3 +19,5 @@ logs/
 *.cvg
 *.msh
 *.12d
+
+docs/*.md
